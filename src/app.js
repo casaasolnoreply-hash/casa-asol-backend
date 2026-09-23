@@ -30,10 +30,17 @@ const PORT = process.env.PORT || 3001;
 app.use(helmet());
 
 // ── CORS ────────────────────────────────────────────────
-const allowed = (process.env.ALLOWED_ORIGINS || "http://localhost:5173").split(",");
+// Se normaliza cada origen (sin espacios, sin "/" final) para que un
+// espacio o salto de línea de más al pegarlo en el dashboard del
+// hosting no rompa la comparación exacta.
+const normalizeOrigin = (o) => o.trim().replace(/\/+$/, "");
+const allowed = (process.env.ALLOWED_ORIGINS || "http://localhost:5173")
+  .split(",")
+  .map(normalizeOrigin)
+  .filter(Boolean);
 app.use(cors({
   origin: (origin, cb) => {
-    if (!origin || allowed.includes(origin)) return cb(null, true);
+    if (!origin || allowed.includes(normalizeOrigin(origin))) return cb(null, true);
     cb(new Error(`Origen no permitido por CORS: ${origin}`));
   },
   credentials: true,
@@ -77,6 +84,7 @@ initDB()
   .then(() => {
     app.listen(PORT, () => {
       console.log(`\n[OK] Backend Casa ASOL corriendo en http://localhost:${PORT}`);
+      console.log(`     CORS orígenes permitidos: ${JSON.stringify(allowed)}`);
       console.log(`     PostgreSQL: ${process.env.DATABASE_URL?.split("@")[1] || "no configurado"}`);
       console.log(`     Cloudinary: ${process.env.CLOUDINARY_CLOUD_NAME || "no configurado"}`);
       console.log(`     Base de datos: ${dbWasReset ? "RECIÉN RESETEADA (RESET_DB=true)" : "sin cambios (RESET_DB=false)"}`);
