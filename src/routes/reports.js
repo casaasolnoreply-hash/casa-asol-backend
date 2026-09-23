@@ -2,9 +2,13 @@ const router = require("express").Router();
 const auth   = require("../middleware/auth");
 const Report = require("../models/Report");
 const Role   = require("../models/Role");
-const { getReportFields, REPORT_FIELDS } = require("../config/reportFields");
+const { getReportFields, REPORT_FIELDS, flattenNarrativeFields } = require("../config/reportFields");
 
-const canSeeAll = (role) => role === "admin" || role === "desarrollador";
+// Quién puede ver TODOS los informes de todos los roles y
+// aceptarlos/devolverlos — admin/desarrollador por el acceso total
+// del sistema, y las dos directoras porque son quienes reciben y
+// revisan los informes que envía cada área operativa.
+const canSeeAll = (role) => ["admin", "desarrollador", "directora_tecnica", "directora_programatica"].includes(role);
 
 // Editable en borrador (todavía no se manda) o devuelto (se manda a
 // corregir). Bloqueado mientras está en revisión (enviado) o ya
@@ -76,7 +80,7 @@ const validatePayload = (role, { periodType, periodStart, periodEnd, stats, narr
     return { error: `Campo numérico desconocido: ${key}` };
   }
 
-  const narrativeKeys = new Set(config.narrativeFields.map((f) => f.key));
+  const narrativeKeys = new Set(flattenNarrativeFields(config.narrativeFields).map((f) => f.key));
   for (const key of Object.keys(narrative || {})) {
     if (!narrativeKeys.has(key)) return { error: `Sección de texto desconocida: ${key}` };
     if (typeof narrative[key] !== "string") return { error: `La sección "${key}" debe ser texto` };
