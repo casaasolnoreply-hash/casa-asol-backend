@@ -91,6 +91,7 @@ router.post("/", auth, async (req, res) => {
     const created = await Attention.create({
       beneficiaryId, role, authorId: req.admin.id,
       attentionDate: req.body.attentionDate, type: req.body.type, notes: req.body.notes,
+      images: Array.isArray(req.body.images) ? req.body.images : [],
     });
     res.status(201).json(created);
   } catch {

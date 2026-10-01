@@ -151,6 +151,11 @@ const migrateDB = async () => {
       updated_at     TIMESTAMP NOT NULL DEFAULT NOW()
     )
   `);
+  // Fotos de respaldo de cada registro del expediente (evidencia de la
+  // actividad) — arreglo de URLs de Cloudinary, igual que las galerías
+  // del contenido público.
+  await pool.query("ALTER TABLE attentions ADD COLUMN IF NOT EXISTS images JSONB NOT NULL DEFAULT '[]'::jsonb");
+
   await pool.query(`DROP TRIGGER IF EXISTS trg_attentions_updated_at ON attentions`);
   await pool.query(`
     CREATE TRIGGER trg_attentions_updated_at BEFORE UPDATE ON attentions

@@ -119,6 +119,7 @@ const SCHEMA_SQL = `
     attention_date DATE NOT NULL,
     type           TEXT NOT NULL,
     notes          TEXT,
+    images         JSONB NOT NULL DEFAULT '[]'::jsonb,
     created_at     TIMESTAMP NOT NULL DEFAULT NOW(),
     updated_at     TIMESTAMP NOT NULL DEFAULT NOW()
   );

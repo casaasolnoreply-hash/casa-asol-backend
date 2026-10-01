@@ -2,7 +2,7 @@ const { pool } = require("../config/db");
 
 const FIELDS = `
   attentions.id, attentions.beneficiary_id, attentions.role, attentions.author_id,
-  attentions.attention_date, attentions.type, attentions.notes,
+  attentions.attention_date, attentions.type, attentions.notes, attentions.images,
   attentions.created_at, attentions.updated_at,
   users.username AS author_username, beneficiaries.full_name AS beneficiary_name
 `;
@@ -33,23 +33,24 @@ const findById = async (id) => {
   return rows[0] || null;
 };
 
-const create = async ({ beneficiaryId, role, authorId, attentionDate, type, notes }) => {
+const create = async ({ beneficiaryId, role, authorId, attentionDate, type, notes, images }) => {
   const { rows } = await pool.query(
-    `INSERT INTO attentions (beneficiary_id, role, author_id, attention_date, type, notes)
-     VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
-    [beneficiaryId || null, role, authorId, attentionDate, type, notes || null]
+    `INSERT INTO attentions (beneficiary_id, role, author_id, attention_date, type, notes, images)
+     VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+    [beneficiaryId || null, role, authorId, attentionDate, type, notes || null, JSON.stringify(images || [])]
   );
   return findById(rows[0].id);
 };
 
-const update = async (id, { attentionDate, type, notes }) => {
+const update = async (id, { attentionDate, type, notes, images }) => {
   await pool.query(
     `UPDATE attentions SET
        attention_date = COALESCE($1, attention_date),
        type = COALESCE($2, type),
-       notes = $3
-     WHERE id = $4`,
-    [attentionDate, type, notes ?? null, id]
+       notes = $3,
+       images = COALESCE($4, images)
+     WHERE id = $5`,
+    [attentionDate, type, notes ?? null, images ? JSON.stringify(images) : null, id]
   );
   return findById(id);
 };
