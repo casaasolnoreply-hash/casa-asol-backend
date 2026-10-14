@@ -1,12 +1,13 @@
 const router = require("express").Router();
 const auth   = require("../middleware/auth");
-const { requirePermission } = require("../middleware/authorize");
+const { requirePermission, requireScoped } = require("../middleware/authorize");
 const Beneficiary = require("../models/Beneficiary");
 
 const canManage = requirePermission("manageBeneficiaries");
+const canView   = requireScoped("verEstudiantes");
 
-// GET /api/beneficiaries — cualquier cuenta activa (uso interno, no público)
-router.get("/", auth, async (req, res) => {
+// GET /api/beneficiaries — cualquier cuenta activa con el permiso "verEstudiantes"
+router.get("/", auth, canView, async (req, res) => {
   try {
     const { status } = req.query;
     res.json(await Beneficiary.findAll({ status }));

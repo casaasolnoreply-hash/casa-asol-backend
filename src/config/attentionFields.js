@@ -29,14 +29,17 @@ const SHARED_CATEGORIES = [
       { key: "atencion_psicologica_individual",  label: "Atención psicológica individual", requiresBeneficiary: true },
       { key: "atencion_psicologica_grupal",      label: "Atención psicológica grupal",     requiresBeneficiary: false },
       { key: "orientacion_vocacional",           label: "Orientación vocacional",          requiresBeneficiary: true },
+      { key: "talleres_mapaf",                   label: "Talleres con MAPAF",              requiresBeneficiary: false },
     ],
   },
   {
     name: "Reuniones",
     types: [
-      { key: "reunion_equipo_general", label: "Reunión de equipo",  requiresBeneficiary: false },
-      { key: "reunion_aj",             label: "Reunión con AJ",     requiresBeneficiary: false },
-      { key: "reunion_jd",             label: "Reunión JD",         requiresBeneficiary: false },
+      { key: "reunion_equipo_general",     label: "Reunión de equipo",          requiresBeneficiary: false },
+      { key: "reunion_aj",                 label: "Reunión con AJ",             requiresBeneficiary: false },
+      { key: "reunion_jd",                 label: "Reunión JD",                 requiresBeneficiary: false },
+      { key: "reunion_interinstitucional", label: "Reunión interinstitucional", requiresBeneficiary: false },
+      { key: "asamblea",                   label: "Asamblea",                   requiresBeneficiary: false },
     ],
   },
   {
@@ -46,6 +49,14 @@ const SHARED_CATEGORIES = [
       { key: "capacitaciones",  label: "Capacitaciones", requiresBeneficiary: false },
       { key: "excursiones",     label: "Excursiones",    requiresBeneficiary: false },
       { key: "encuentros",      label: "Encuentros",     requiresBeneficiary: false },
+    ],
+  },
+  {
+    name: "Varios",
+    types: [
+      { key: "mantenimiento", label: "Mantenimiento", requiresBeneficiary: false },
+      { key: "gestiones",     label: "Gestiones",     requiresBeneficiary: false },
+      { key: "comunicacion",  label: "Comunicación",  requiresBeneficiary: false },
     ],
   },
 ];
@@ -82,6 +93,19 @@ const ATTENTION_FIELDS_RAW = {
       ...SHARED_CATEGORIES,
     ],
   },
+
+  // El resto de roles operativos no tiene (todavía) tipos propios,
+  // pero todas las personas del equipo pueden registrar las
+  // categorías compartidas (Atenciones, Reuniones, Formación y
+  // recreación, Varios) — antes solo psicóloga y trabajadora social
+  // tenían acceso a Actividades.
+  directora_programatica: { label: "Directora Programática", categories: [...SHARED_CATEGORIES] },
+  directora_tecnica:      { label: "Directora Técnica",      categories: [...SHARED_CATEGORIES] },
+  tutora:                 { label: "Tutora",                 categories: [...SHARED_CATEGORIES] },
+  auxiliar:                { label: "Auxiliar",               categories: [...SHARED_CATEGORIES] },
+  cocinera:               { label: "Cocinera",                categories: [...SHARED_CATEGORIES] },
+  panadera:               { label: "Panadera",                categories: [...SHARED_CATEGORIES] },
+  contadora:              { label: "Contadora",                categories: [...SHARED_CATEGORIES] },
 };
 
 // Aplana categories en un solo arreglo "types" (lo que ya esperaba el

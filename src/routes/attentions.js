@@ -4,8 +4,14 @@ const Attention   = require("../models/Attention");
 const Beneficiary = require("../models/Beneficiary");
 const Role   = require("../models/Role");
 const { getAttentionFields, ATTENTION_FIELDS } = require("../config/attentionFields");
+const { getScope, requireScoped } = require("../middleware/authorize");
 
-const canSeeAll = (role) => role === "admin" || role === "desarrollador";
+// Antes esto era admin/desarrollador nada más. Ahora es el permiso
+// "verImagenes" (ver config/roles.seed.js): quién puede ver/filtrar
+// actividades e imágenes de OTROS roles, con el mismo alcance
+// todos/algunos/ninguno que el resto de permisos escalables.
+const canSeeRole = (scope, role) => scope === "all" || (Array.isArray(scope) && scope.includes(role));
+const canCreate  = requireScoped("crearActividades");
 
 const validatePayload = (role, { attentionDate, type, beneficiaryId }) => {
   const config = getAttentionFields(role);
@@ -20,12 +26,20 @@ const validatePayload = (role, { attentionDate, type, beneficiaryId }) => {
   return null;
 };
 
-// GET /api/attentions/available-roles — qué roles llevan expediente
+// GET /api/attentions/available-roles — qué roles llevan expediente,
+// recortado al alcance de "verImagenes" del rol que consulta (más su
+// propio rol, que siempre puede ver).
 router.get("/available-roles", auth, async (req, res) => {
   try {
+    const scope = await getScope(req, "verImagenes");
     const roles = await Role.findAll();
     const configured = Object.keys(ATTENTION_FIELDS);
-    res.json(roles.filter((r) => configured.includes(r.name)).map((r) => ({ name: r.name, label: r.label })));
+    res.json(
+      roles
+        .filter((r) => configured.includes(r.name))
+        .filter((r) => r.name === req.admin.role || canSeeRole(scope, r.name))
+        .map((r) => ({ name: r.name, label: r.label }))
+    );
   } catch {
     res.status(500).json({ error: "Error del servidor" });
   }
@@ -45,7 +59,8 @@ router.get("/config/:role", auth, (req, res) => {
 // de aquí le corresponde.
 router.get("/summary", auth, async (req, res) => {
   try {
-    const role = canSeeAll(req.admin.role) ? (req.query.role || req.admin.role) : req.admin.role;
+    const scope = await getScope(req, "verImagenes");
+    const role = req.query.role && canSeeRole(scope, req.query.role) ? req.query.role : req.admin.role;
     if (!getAttentionFields(role)) return res.status(404).json({ error: "Este rol no tiene expediente configurado todavía" });
 
     const { periodStart, periodEnd } = req.query;
@@ -66,18 +81,30 @@ router.get("/summary", auth, async (req, res) => {
 // de estudiantes.
 router.get("/", auth, async (req, res) => {
   try {
-    const role = canSeeAll(req.admin.role) ? (req.query.role || undefined) : req.admin.role;
+    const scope = await getScope(req, "verImagenes");
     const beneficiaryId = req.query.beneficiaryId ? parseInt(req.query.beneficiaryId, 10) : undefined;
-    res.json(await Attention.findAll({ role, beneficiaryId }));
+    let filters;
+    if (scope === "all") {
+      filters = { role: req.query.role || undefined, beneficiaryId };
+    } else if (Array.isArray(scope) && scope.length) {
+      const roles = [...new Set([req.admin.role, ...scope])];
+      filters = req.query.role && roles.includes(req.query.role)
+        ? { role: req.query.role, beneficiaryId }
+        : { roleIn: roles, beneficiaryId };
+    } else {
+      filters = { role: req.admin.role, beneficiaryId };
+    }
+    res.json(await Attention.findAll(filters));
   } catch {
     res.status(500).json({ error: "Error del servidor" });
   }
 });
 
 // POST /api/attentions
-router.post("/", auth, async (req, res) => {
+router.post("/", auth, canCreate, async (req, res) => {
   try {
-    const role = canSeeAll(req.admin.role) && req.body.role ? req.body.role : req.admin.role;
+    const scope = await getScope(req, "verImagenes");
+    const role = req.body.role && canSeeRole(scope, req.body.role) ? req.body.role : req.admin.role;
     const beneficiaryId = req.body.beneficiaryId ? parseInt(req.body.beneficiaryId, 10) : null;
 
     const err = validatePayload(role, { ...req.body, beneficiaryId });
@@ -107,7 +134,7 @@ router.put("/:id", auth, async (req, res) => {
 
     const existing = await Attention.findById(id);
     if (!existing) return res.status(404).json({ error: "Atención no encontrada" });
-    if (existing.author_id !== req.admin.id && !canSeeAll(req.admin.role)) {
+    if (existing.author_id !== req.admin.id && !canSeeRole(await getScope(req, "verImagenes"), existing.role)) {
       return res.status(403).json({ error: "No puedes editar la atención de otra persona" });
     }
 
@@ -132,7 +159,7 @@ router.delete("/:id", auth, async (req, res) => {
 
     const existing = await Attention.findById(id);
     if (!existing) return res.status(404).json({ error: "Atención no encontrada" });
-    if (existing.author_id !== req.admin.id && !canSeeAll(req.admin.role)) {
+    if (existing.author_id !== req.admin.id && !canSeeRole(await getScope(req, "verImagenes"), existing.role)) {
       return res.status(403).json({ error: "No puedes eliminar la atención de otra persona" });
     }
 

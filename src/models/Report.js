@@ -10,10 +10,11 @@ const FIELDS = `
 
 // authorId: si se pasa, solo trae los informes de ese autor (self-service).
 // Sin authorId trae todos (uso: admin/desarrollador).
-const findAll = async ({ role, authorId } = {}) => {
+const findAll = async ({ role, roleIn, authorId } = {}) => {
   const conditions = [];
   const params = [];
   if (role) { params.push(role); conditions.push(`reports.role = $${params.length}`); }
+  if (roleIn?.length) { params.push(roleIn); conditions.push(`reports.role = ANY($${params.length})`); }
   if (authorId) { params.push(authorId); conditions.push(`reports.author_id = $${params.length}`); }
   const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
   const { rows } = await pool.query(

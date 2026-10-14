@@ -15,10 +15,11 @@ const JOINS = `
 
 // role: si se pasa, solo trae atenciones de ese rol (así un rol no ve
 // las notas clínicas de otro). beneficiaryId: filtra a un estudiante.
-const findAll = async ({ role, beneficiaryId } = {}) => {
+const findAll = async ({ role, roleIn, beneficiaryId } = {}) => {
   const conditions = [];
   const params = [];
   if (role) { params.push(role); conditions.push(`attentions.role = $${params.length}`); }
+  if (roleIn?.length) { params.push(roleIn); conditions.push(`attentions.role = ANY($${params.length})`); }
   if (beneficiaryId) { params.push(beneficiaryId); conditions.push(`attentions.beneficiary_id = $${params.length}`); }
   const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
   const { rows } = await pool.query(

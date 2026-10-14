@@ -3,12 +3,15 @@ const auth   = require("../middleware/auth");
 const Report = require("../models/Report");
 const Role   = require("../models/Role");
 const { getReportFields, REPORT_FIELDS, flattenNarrativeFields } = require("../config/reportFields");
+const { getScope } = require("../middleware/authorize");
 
-// Quién puede ver TODOS los informes de todos los roles y
-// aceptarlos/devolverlos — admin/desarrollador por el acceso total
-// del sistema, y las dos directoras porque son quienes reciben y
-// revisan los informes que envía cada área operativa.
-const canSeeAll = (role) => ["admin", "desarrollador", "directora_tecnica", "directora_programatica"].includes(role);
+// Antes esto era una lista fija de roles en el código
+// (admin/desarrollador/las-dos-directoras). Ahora es configurable
+// por rol desde el panel (permiso "verInformes" — ver
+// config/roles.seed.js y middleware/authorize.js): el alcance puede
+// ser "all" (como antes), "none" (solo lo propio) o una lista de
+// roles específicos.
+const canSeeRole = (scope, role) => scope === "all" || (Array.isArray(scope) && scope.includes(role));
 
 // Editable en borrador (todavía no se manda) o devuelto (se manda a
 // corregir). Bloqueado mientras está en revisión (enviado) o ya
@@ -94,11 +97,13 @@ const validatePayload = (role, { periodType, periodStart, periodEnd, stats, narr
 // rol ver/crear informes, ya que ellos no tienen uno propio).
 router.get("/available-roles", auth, async (req, res) => {
   try {
+    const scope = await getScope(req, "verInformesPorUsuario");
     const roles = await Role.findAll();
     const configured = Object.keys(REPORT_FIELDS);
     res.json(
       roles
         .filter((r) => configured.includes(r.name))
+        .filter((r) => r.name === req.admin.role || canSeeRole(scope, r.name))
         .map((r) => ({ name: r.name, label: r.label }))
     );
   } catch {
@@ -113,12 +118,23 @@ router.get("/config/:role", auth, (req, res) => {
   res.json(config);
 });
 
-// GET /api/reports — admin/desarrollador ven todo; el resto solo lo suyo
+// GET /api/reports — según el alcance de "verInformes": "all" ve
+// todo, una lista de roles ve lo propio + esos roles, "none" solo lo
+// propio.
 router.get("/", auth, async (req, res) => {
   try {
-    const filters = canSeeAll(req.admin.role)
-      ? { role: req.query.role || undefined }
-      : { role: req.admin.role, authorId: req.admin.id };
+    const scope = await getScope(req, "verInformes");
+    let filters;
+    if (scope === "all") {
+      filters = { role: req.query.role || undefined };
+    } else if (Array.isArray(scope) && scope.length) {
+      const roles = [...new Set([req.admin.role, ...scope])];
+      filters = req.query.role && roles.includes(req.query.role)
+        ? { role: req.query.role }
+        : { roleIn: roles };
+    } else {
+      filters = { role: req.admin.role, authorId: req.admin.id };
+    }
     res.json(await Report.findAll(filters));
   } catch {
     res.status(500).json({ error: "Error del servidor" });
@@ -126,10 +142,11 @@ router.get("/", auth, async (req, res) => {
 });
 
 // POST /api/reports — crea un borrador para el propio rol del autor
-// (admin/desarrollador pueden pasar "role" explícito para llenar a nombre de alguien)
+// (quienes ven todos los roles pueden pasar "role" explícito para llenar a nombre de alguien)
 router.post("/", auth, async (req, res) => {
   try {
-    const role = canSeeAll(req.admin.role) && req.body.role ? req.body.role : req.admin.role;
+    const scope = await getScope(req, "verInformes");
+    const role = canSeeRole(scope, req.body.role) && req.body.role ? req.body.role : req.admin.role;
     const err = validatePayload(role, req.body);
     if (err) return res.status(400).json(err);
 
@@ -153,7 +170,7 @@ router.put("/:id", auth, async (req, res) => {
 
     const existing = await Report.findById(id);
     if (!existing) return res.status(404).json({ error: "Informe no encontrado" });
-    if (existing.author_id !== req.admin.id && !canSeeAll(req.admin.role)) {
+    if (existing.author_id !== req.admin.id && !canSeeRole(await getScope(req, "verInformes"), existing.role)) {
       return res.status(403).json({ error: "No puedes editar el informe de otra persona" });
     }
     if (!isEditable(existing)) {
@@ -183,7 +200,7 @@ router.post("/:id/submit", auth, async (req, res) => {
 
     const existing = await Report.findById(id);
     if (!existing) return res.status(404).json({ error: "Informe no encontrado" });
-    if (existing.author_id !== req.admin.id && !canSeeAll(req.admin.role)) {
+    if (existing.author_id !== req.admin.id && !canSeeRole(await getScope(req, "verInformes"), existing.role)) {
       return res.status(403).json({ error: "No puedes enviar el informe de otra persona" });
     }
     if (!isEditable(existing)) {
@@ -203,12 +220,14 @@ router.post("/:id/submit", auth, async (req, res) => {
 // informe enviado; queda bloqueado de forma permanente.
 router.post("/:id/accept", auth, async (req, res) => {
   try {
-    if (!canSeeAll(req.admin.role)) return res.status(403).json({ error: "No tienes permiso para esta acción" });
     const id = parseInt(req.params.id, 10);
     if (isNaN(id)) return res.status(400).json({ error: "ID inválido" });
 
     const existing = await Report.findById(id);
     if (!existing) return res.status(404).json({ error: "Informe no encontrado" });
+    if (!canSeeRole(await getScope(req, "verInformesPorUsuario"), existing.role)) {
+      return res.status(403).json({ error: "No tienes permiso para esta acción" });
+    }
     if (existing.status !== "enviado") {
       return res.status(409).json({ error: `Solo se puede aceptar un informe "enviado" (está en "${existing.status}")` });
     }
@@ -223,12 +242,14 @@ router.post("/:id/accept", auth, async (req, res) => {
 // informe enviado para que el autor lo corrija y lo reenvíe.
 router.post("/:id/return", auth, async (req, res) => {
   try {
-    if (!canSeeAll(req.admin.role)) return res.status(403).json({ error: "No tienes permiso para esta acción" });
     const id = parseInt(req.params.id, 10);
     if (isNaN(id)) return res.status(400).json({ error: "ID inválido" });
 
     const existing = await Report.findById(id);
     if (!existing) return res.status(404).json({ error: "Informe no encontrado" });
+    if (!canSeeRole(await getScope(req, "verInformesPorUsuario"), existing.role)) {
+      return res.status(403).json({ error: "No tienes permiso para esta acción" });
+    }
     if (existing.status !== "enviado") {
       return res.status(409).json({ error: `Solo se puede devolver un informe "enviado" (está en "${existing.status}")` });
     }
@@ -252,7 +273,7 @@ router.delete("/:id", auth, async (req, res) => {
 
     const existing = await Report.findById(id);
     if (!existing) return res.status(404).json({ error: "Informe no encontrado" });
-    if (existing.author_id !== req.admin.id && !canSeeAll(req.admin.role)) {
+    if (existing.author_id !== req.admin.id && !canSeeRole(await getScope(req, "verInformes"), existing.role)) {
       return res.status(403).json({ error: "No puedes eliminar el informe de otra persona" });
     }
     if (existing.status === "aceptado") {

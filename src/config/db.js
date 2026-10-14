@@ -173,6 +173,24 @@ const seedRoles = async () => {
       [r.name, r.label, r.description, JSON.stringify(r.permissions || {}), !!r.selfRequestable]
     );
   }
+  await backfillRolePermissions();
+};
+
+// Para un rol que YA existía antes de agregar una llave de permiso
+// nueva en roles.seed.js (p.ej. "verImagenes"), el INSERT de arriba
+// no hace nada (ON CONFLICT DO NOTHING) y esa llave nunca llegaría a
+// la base de datos real sin un script manual. Este merge la agrega
+// sola en cada arranque, sin pisar ninguna llave que un admin ya
+// haya personalizado desde el panel: `defaults || permissions` deja
+// ganar a `permissions` (lo que ya hay) en cualquier llave repetida,
+// y solo rellena las que faltan.
+const backfillRolePermissions = async () => {
+  for (const r of ROLE_DEFINITIONS) {
+    await pool.query(
+      `UPDATE roles SET permissions = $2::jsonb || permissions WHERE name = $1`,
+      [r.name, JSON.stringify(r.permissions || {})]
+    );
+  }
 };
 
 // ── Sembrar cuenta inicial de desarrollador ───────────────

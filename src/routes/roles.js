@@ -2,7 +2,7 @@ const router = require("express").Router();
 const auth   = require("../middleware/auth");
 const { requireRole } = require("../middleware/authorize");
 const Role   = require("../models/Role");
-const { PERMISSION_KEYS } = require("../config/roles.seed");
+const { PERMISSION_KEYS, SCOPED_PERMISSION_KEYS } = require("../config/roles.seed");
 
 // GET /api/roles/public — roles que se pueden elegir en el formulario
 // público "Solicitar acceso" (no incluye admin/desarrollador).
@@ -44,6 +44,15 @@ router.put("/:name", auth, requireRole("desarrollador"), async (req, res) => {
     const permissions = {};
     for (const key of PERMISSION_KEYS) {
       if (incoming[key] !== undefined) permissions[key] = !!incoming[key];
+    }
+    // Escalables: true (todos), false (ninguno) o un arreglo de
+    // nombres de rol (algunos) — a diferencia de los de arriba, NO
+    // se fuerzan a booleano porque un arreglo es un valor válido.
+    for (const key of SCOPED_PERMISSION_KEYS) {
+      const v = incoming[key];
+      if (v === undefined) continue;
+      if (typeof v === "boolean") permissions[key] = v;
+      else if (Array.isArray(v) && v.every((x) => typeof x === "string")) permissions[key] = v;
     }
 
     const updated = await Role.updatePermissions(name, permissions);
