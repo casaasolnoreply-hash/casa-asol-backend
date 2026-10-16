@@ -13,37 +13,101 @@ const JOINS = `
   LEFT JOIN beneficiaries ON beneficiaries.id = attentions.beneficiary_id
 `;
 
+// Trae los integrantes de varias actividades de una sola consulta y
+// los agrupa por attention_id, para no hacer una consulta por fila al
+// listar (N+1). Cada integrante es un estudiante registrado
+// (beneficiary_id, con su nombre ya resuelto) o una persona suelta
+// (full_name) — ver attention_participants en schema.js.
+const attachParticipants = async (rows) => {
+  if (!rows.length) return rows;
+  const ids = rows.map((r) => r.id);
+  const { rows: participants } = await pool.query(
+    `SELECT p.id, p.attention_id, p.beneficiary_id, p.full_name,
+            b.full_name AS beneficiary_full_name
+     FROM attention_participants p
+     LEFT JOIN beneficiaries b ON b.id = p.beneficiary_id
+     WHERE p.attention_id = ANY($1)
+     ORDER BY p.id`,
+    [ids]
+  );
+  const byAttention = new Map();
+  for (const p of participants) {
+    const list = byAttention.get(p.attention_id) || [];
+    list.push({
+      id: p.id,
+      beneficiaryId: p.beneficiary_id,
+      fullName: p.beneficiary_id ? p.beneficiary_full_name : p.full_name,
+      isStudent: !!p.beneficiary_id,
+    });
+    byAttention.set(p.attention_id, list);
+  }
+  for (const row of rows) {
+    row.participants = byAttention.get(row.id) || [];
+    row.participant_count = row.participants.length;
+  }
+  return rows;
+};
+
 // role: si se pasa, solo trae atenciones de ese rol (así un rol no ve
-// las notas clínicas de otro). beneficiaryId: filtra a un estudiante.
+// las notas clínicas de otro). beneficiaryId: filtra a un estudiante
+// (coincide tanto con el campo legado attentions.beneficiary_id como
+// con la nueva tabla de integrantes).
 const findAll = async ({ role, roleIn, beneficiaryId } = {}) => {
   const conditions = [];
   const params = [];
   if (role) { params.push(role); conditions.push(`attentions.role = $${params.length}`); }
   if (roleIn?.length) { params.push(roleIn); conditions.push(`attentions.role = ANY($${params.length})`); }
-  if (beneficiaryId) { params.push(beneficiaryId); conditions.push(`attentions.beneficiary_id = $${params.length}`); }
+  if (beneficiaryId) {
+    params.push(beneficiaryId);
+    conditions.push(`(attentions.beneficiary_id = $${params.length} OR EXISTS (
+      SELECT 1 FROM attention_participants p WHERE p.attention_id = attentions.id AND p.beneficiary_id = $${params.length}
+    ))`);
+  }
   const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
   const { rows } = await pool.query(
     `SELECT ${FIELDS} FROM attentions ${JOINS} ${where} ORDER BY attentions.attention_date DESC, attentions.id DESC`,
     params
   );
-  return rows;
+  return attachParticipants(rows);
 };
 
 const findById = async (id) => {
   const { rows } = await pool.query(`SELECT ${FIELDS} FROM attentions ${JOINS} WHERE attentions.id = $1`, [id]);
-  return rows[0] || null;
+  if (!rows[0]) return null;
+  await attachParticipants(rows);
+  return rows[0];
 };
 
-const create = async ({ beneficiaryId, role, authorId, attentionDate, type, notes, images }) => {
+// Reemplaza por completo la lista de integrantes de una actividad —
+// más simple que calcular un diff, y el formulario del panel siempre
+// manda la lista completa de todas formas.
+const setParticipants = async (attentionId, participants) => {
+  await pool.query("DELETE FROM attention_participants WHERE attention_id = $1", [attentionId]);
+  if (!participants?.length) return;
+  const values = [];
+  const params = [];
+  participants.forEach((p, i) => {
+    const base = i * 3;
+    values.push(`($${base + 1}, $${base + 2}, $${base + 3})`);
+    params.push(attentionId, p.beneficiaryId || null, p.beneficiaryId ? null : (p.fullName || "").trim());
+  });
+  await pool.query(
+    `INSERT INTO attention_participants (attention_id, beneficiary_id, full_name) VALUES ${values.join(",")}`,
+    params
+  );
+};
+
+const create = async ({ beneficiaryId, role, authorId, attentionDate, type, notes, images, participants }) => {
   const { rows } = await pool.query(
     `INSERT INTO attentions (beneficiary_id, role, author_id, attention_date, type, notes, images)
      VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
     [beneficiaryId || null, role, authorId, attentionDate, type, notes || null, JSON.stringify(images || [])]
   );
+  if (participants) await setParticipants(rows[0].id, participants);
   return findById(rows[0].id);
 };
 
-const update = async (id, { attentionDate, type, notes, images }) => {
+const update = async (id, { attentionDate, type, notes, images, participants }) => {
   await pool.query(
     `UPDATE attentions SET
        attention_date = COALESCE($1, attention_date),
@@ -53,6 +117,7 @@ const update = async (id, { attentionDate, type, notes, images }) => {
      WHERE id = $5`,
     [attentionDate, type, notes ?? null, images ? JSON.stringify(images) : null, id]
   );
+  if (participants) await setParticipants(id, participants);
   return findById(id);
 };
 

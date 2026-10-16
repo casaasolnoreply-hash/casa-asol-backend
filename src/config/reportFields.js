@@ -256,6 +256,70 @@ function flattenNarrativeFields(narrativeFields) {
   return out;
 }
 
-const getReportFields = (role) => REPORT_FIELDS[role] || null;
+// ── Roles creados desde "Roles y permisos" (ver routes/roles.js) ──
+// No tienen un documento institucional propio que replicar (a
+// diferencia de los de arriba, cada uno calcado de un formato real),
+// así que reciben una plantilla mínima genérica: un resumen y una
+// conclusión, sin secciones numeradas ni autocálculo desde
+// Actividades. Sigue siendo un informe real y editable, solo que
+// menos detallado que uno hecho a mano para esa área específica.
+let dynamicRoles = []; // [{ name, label, codePrefix }]
 
-module.exports = { REPORT_FIELDS, getReportFields, flattenNarrativeFields };
+const genericTemplate = (r) => ({
+  codePrefix: r.codePrefix,
+  docTitle: `Informe de ${r.label}`,
+  periodTypes: ["diario", "semanal", "mensual", "trimestral", "semestral", "anual"],
+  narrativeFields: [
+    { kind: "intro", key: "resumen_general", label: "Resumen general del periodo" },
+    { kind: "closing", key: "conclusion", label: "Conclusión general" },
+  ],
+  statFields: [],
+});
+
+const getReportFields = (role) => {
+  if (REPORT_FIELDS[role]) return REPORT_FIELDS[role];
+  const dynamic = dynamicRoles.find((r) => r.name === role);
+  return dynamic ? genericTemplate(dynamic) : null;
+};
+
+// Nombres de rol con informe configurado (de código + dinámicos) —
+// función, no un objeto directo, para que siempre refleje el estado
+// actual (ver mismo patrón/comentario en attentionFields.js).
+const getConfiguredRoles = () => [
+  ...Object.keys(REPORT_FIELDS),
+  ...dynamicRoles.map((r) => r.name),
+];
+
+// Todos los codePrefix ya usados (de código + dinámicos), para que el
+// panel no deje crear un rol con un prefijo repetido.
+const getUsedCodePrefixes = () => [
+  ...Object.values(REPORT_FIELDS).map((r) => r.codePrefix),
+  ...dynamicRoles.map((r) => r.codePrefix),
+];
+
+const addDynamicRole = (role) => {
+  if (!dynamicRoles.some((r) => r.name === role.name)) dynamicRoles.push(role);
+};
+
+const removeDynamicRole = (name) => {
+  dynamicRoles = dynamicRoles.filter((r) => r.name !== name);
+};
+
+// Al arrancar: cualquier rol de la base de datos que no tenga informe
+// en el código recibe la plantilla genérica — necesita su codePrefix,
+// que se guarda en site_data (key "roleCodePrefixes") al crear el rol
+// (ver routes/roles.js), porque la tabla roles no tiene esa columna.
+const loadDynamicRoles = async () => {
+  const Role = require("../models/Role");
+  const { getData } = require("./db");
+  const roles = await Role.findAll();
+  const prefixes = (await getData("roleCodePrefixes")) || {};
+  dynamicRoles = roles
+    .filter((r) => !REPORT_FIELDS[r.name])
+    .map((r) => ({ name: r.name, label: r.label, codePrefix: prefixes[r.name] }));
+};
+
+module.exports = {
+  REPORT_FIELDS, getReportFields, flattenNarrativeFields, getConfiguredRoles,
+  getUsedCodePrefixes, addDynamicRole, removeDynamicRole, loadDynamicRoles,
+};

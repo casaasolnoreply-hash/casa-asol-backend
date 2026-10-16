@@ -22,7 +22,7 @@
 // código, p.ej. reports.js `canSeeAll` o la condición de la barra
 // lateral para Actividades/Galería).
 const OPERATIONAL_DEFAULTS = { crearInformes: true, verEstudiantes: true, crearActividades: true };
-const DIRECTOR_DEFAULTS    = { ...OPERATIONAL_DEFAULTS, verInformes: true, verInformesPorUsuario: true, crearActividades: false };
+const DIRECTOR_DEFAULTS    = { ...OPERATIONAL_DEFAULTS, verInformes: true, verInformesPorUsuario: true, aceptarInformes: true, crearActividades: false };
 
 const ROLE_DEFINITIONS = [
   {
@@ -38,8 +38,8 @@ const ROLE_DEFINITIONS = [
     description: "Gestión de usuarios, contenido del sitio, mensajes y ajustes.",
     permissions: {
       manageUsers: true, manageContent: true, manageSettings: true, viewMessages: true,
-      verImagenes: true, verInformes: true, verInformesPorUsuario: true, crearInformes: true,
-      verEstudiantes: true, crearActividades: true,
+      verImagenes: true, verInformes: true, verInformesPorUsuario: true, aceptarInformes: true, crearInformes: true,
+      verEstudiantes: true, crearActividades: true, gestionarTiposActividad: true,
     },
     selfRequestable: false,
   },
@@ -130,7 +130,7 @@ const ROLE_DEFINITIONS = [
 // Llaves de permiso simples (sí/no) editables desde el panel.
 // "fullAccess" queda fuera a propósito: es exclusivo del rol
 // "desarrollador" y nunca se otorga por esta vía.
-const PERMISSION_KEYS = ["manageUsers", "manageContent", "manageSettings", "viewMessages", "manageBeneficiaries"];
+const PERMISSION_KEYS = ["manageUsers", "manageContent", "manageSettings", "viewMessages", "manageBeneficiaries", "gestionarTiposActividad"];
 
 // Llaves de permiso "escalables": en vez de solo sí/no, cada una
 // puede valer `true` (todos los roles), `false`/ausente (ninguno) o
@@ -138,7 +138,7 @@ const PERMISSION_KEYS = ["manageUsers", "manageContent", "manageSettings", "view
 // middleware/authorize.js `scopeValue()`. Controlan qué tan lejos ve
 // o actúa un rol sobre los datos de OTROS roles.
 const SCOPED_PERMISSION_KEYS = [
-  "verImagenes", "verInformes", "verInformesPorUsuario", "crearInformes", "verEstudiantes", "crearActividades",
+  "verImagenes", "verInformes", "verInformesPorUsuario", "aceptarInformes", "crearInformes", "verEstudiantes", "crearActividades",
 ];
 
-module.exports = { ROLE_DEFINITIONS, PERMISSION_KEYS, SCOPED_PERMISSION_KEYS };
+module.exports = { ROLE_DEFINITIONS, PERMISSION_KEYS, SCOPED_PERMISSION_KEYS, OPERATIONAL_DEFAULTS };

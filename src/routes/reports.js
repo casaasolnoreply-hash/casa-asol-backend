@@ -2,7 +2,7 @@ const router = require("express").Router();
 const auth   = require("../middleware/auth");
 const Report = require("../models/Report");
 const Role   = require("../models/Role");
-const { getReportFields, REPORT_FIELDS, flattenNarrativeFields } = require("../config/reportFields");
+const { getReportFields, getConfiguredRoles, flattenNarrativeFields } = require("../config/reportFields");
 const { getScope } = require("../middleware/authorize");
 
 // Antes esto era una lista fija de roles en el código
@@ -99,7 +99,7 @@ router.get("/available-roles", auth, async (req, res) => {
   try {
     const scope = await getScope(req, "verInformesPorUsuario");
     const roles = await Role.findAll();
-    const configured = Object.keys(REPORT_FIELDS);
+    const configured = getConfiguredRoles();
     res.json(
       roles
         .filter((r) => configured.includes(r.name))
@@ -216,8 +216,11 @@ router.post("/:id/submit", auth, async (req, res) => {
   }
 });
 
-// POST /api/reports/:id/accept — admin/desarrollador aceptan un
-// informe enviado; queda bloqueado de forma permanente.
+// POST /api/reports/:id/accept — requiere el permiso "aceptarInformes"
+// sobre el rol del informe (separado de "verInformesPorUsuario": se
+// puede dar a alguien el permiso de solo REVISAR informes de otros
+// roles sin poder aceptarlos/devolverlos). Queda bloqueado de forma
+// permanente.
 router.post("/:id/accept", auth, async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
@@ -225,7 +228,7 @@ router.post("/:id/accept", auth, async (req, res) => {
 
     const existing = await Report.findById(id);
     if (!existing) return res.status(404).json({ error: "Informe no encontrado" });
-    if (!canSeeRole(await getScope(req, "verInformesPorUsuario"), existing.role)) {
+    if (!canSeeRole(await getScope(req, "aceptarInformes"), existing.role)) {
       return res.status(403).json({ error: "No tienes permiso para esta acción" });
     }
     if (existing.status !== "enviado") {
@@ -238,8 +241,8 @@ router.post("/:id/accept", auth, async (req, res) => {
   }
 });
 
-// POST /api/reports/:id/return — admin/desarrollador devuelven un
-// informe enviado para que el autor lo corrija y lo reenvíe.
+// POST /api/reports/:id/return — igual que /accept, requiere
+// "aceptarInformes" sobre el rol del informe.
 router.post("/:id/return", auth, async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
@@ -247,7 +250,7 @@ router.post("/:id/return", auth, async (req, res) => {
 
     const existing = await Report.findById(id);
     if (!existing) return res.status(404).json({ error: "Informe no encontrado" });
-    if (!canSeeRole(await getScope(req, "verInformesPorUsuario"), existing.role)) {
+    if (!canSeeRole(await getScope(req, "aceptarInformes"), existing.role)) {
       return res.status(403).json({ error: "No tienes permiso para esta acción" });
     }
     if (existing.status !== "enviado") {

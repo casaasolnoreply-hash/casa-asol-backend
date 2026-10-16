@@ -5,6 +5,8 @@ const cors      = require("cors");
 const helmet    = require("helmet");
 const morgan    = require("morgan");
 const { initDB, migrateDB, seedRoles, seedAdmin } = require("./config/db");
+const { loadCustomTypes, loadDynamicRoles: loadDynamicAttentionRoles } = require("./config/attentionFields");
+const { loadDynamicRoles: loadDynamicReportRoles } = require("./config/reportFields");
 const { PRIVATE_KEY, PUBLIC_KEY } = require("./config/keys");
 
 if (!PRIVATE_KEY || !PUBLIC_KEY) {
@@ -22,6 +24,7 @@ const rolesRoutes    = require("./routes/roles");
 const beneficiariesRoutes = require("./routes/beneficiaries");
 const reportsRoutes       = require("./routes/reports");
 const attentionsRoutes    = require("./routes/attentions");
+const documentsRoutes     = require("./routes/documents");
 
 const app  = express();
 const PORT = process.env.PORT || 3001;
@@ -60,6 +63,7 @@ app.use("/api/roles",    rolesRoutes);
 app.use("/api/beneficiaries", beneficiariesRoutes);
 app.use("/api/reports",       reportsRoutes);
 app.use("/api/attentions",    attentionsRoutes);
+app.use("/api/documents",     documentsRoutes);
 
 // ── Health check ─────────────────────────────────────────
 app.get("/api/health", (_req, res) => res.json({ ok: true, env: process.env.NODE_ENV || "development" }));
@@ -81,6 +85,9 @@ initDB()
   .then(migrateDB)
   .then(seedRoles)
   .then(seedAdmin)
+  .then(loadCustomTypes)
+  .then(loadDynamicAttentionRoles)
+  .then(loadDynamicReportRoles)
   .then(() => {
     app.listen(PORT, () => {
       console.log(`\n[OK] Backend Casa ASOL corriendo en http://localhost:${PORT}`);

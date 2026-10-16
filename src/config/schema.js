@@ -5,8 +5,12 @@
 
 // Orden de borrado: inverso a las dependencias (FKs primero).
 const TABLES_IN_DROP_ORDER = [
+  "report_document_comments",
+  "report_document_versions",
+  "report_documents",
   "reports",
   "report_sequences",
+  "attention_participants",
   "attentions",
   "beneficiaries",
   "user_requests",
@@ -124,6 +128,21 @@ const SCHEMA_SQL = `
     updated_at     TIMESTAMP NOT NULL DEFAULT NOW()
   );
 
+  -- Integrantes de una actividad: puede ser un estudiante registrado
+  -- (beneficiary_id) o una persona sin registrar en "beneficiaries"
+  -- (full_name, ej. personal, familiares, invitados). "beneficiary_id"
+  -- sigue existiendo en "attentions" por compatibilidad con registros
+  -- viejos de un solo estudiante; las actividades nuevas usan esta
+  -- tabla para tener cuantas personas hagan falta.
+  CREATE TABLE IF NOT EXISTS attention_participants (
+    id             SERIAL PRIMARY KEY,
+    attention_id   INTEGER NOT NULL REFERENCES attentions(id) ON DELETE CASCADE,
+    beneficiary_id INTEGER REFERENCES beneficiaries(id) ON DELETE SET NULL,
+    full_name      TEXT,
+    created_at     TIMESTAMP NOT NULL DEFAULT NOW(),
+    CHECK (beneficiary_id IS NOT NULL OR full_name IS NOT NULL)
+  );
+
   -- Correlativo automático por rol para el código de cada informe
   -- (ej. PSI-0001, PSI-0002...). Tabla aparte en vez de un simple
   -- COUNT(*) porque un COUNT se corrompe si se borra un informe —
@@ -162,6 +181,59 @@ const SCHEMA_SQL = `
     updated_at     TIMESTAMP NOT NULL DEFAULT NOW()
   );
 
+  -- Documento de trabajo (editor tipo Word) vinculado a un informe ya
+  -- generado por el sistema — no lo reemplaza ni lo modifica, es un
+  -- contenido aparte que se puede seguir editando. "content" es el JSON
+  -- de TipTap (ProseMirror). Ciclo de calificación propio, independiente
+  -- del estado del informe original (reports.status): borrador/devuelto
+  -- son editables por el autor, enviado espera que un revisor lo tome,
+  -- en_revision es cuando puede comentar/calificar, calificado es final.
+  CREATE TABLE IF NOT EXISTS report_documents (
+    id                 SERIAL PRIMARY KEY,
+    report_id          INTEGER NOT NULL UNIQUE REFERENCES reports(id) ON DELETE CASCADE,
+    author_id          INTEGER NOT NULL REFERENCES users(id),
+    content            JSONB NOT NULL DEFAULT '{}'::jsonb,
+    status             TEXT NOT NULL DEFAULT 'borrador'
+                         CONSTRAINT report_documents_status_check
+                         CHECK (status IN ('borrador', 'enviado', 'en_revision', 'calificado', 'devuelto_a_correccion')),
+    score              TEXT,
+    reviewed_by        INTEGER REFERENCES users(id),
+    reviewed_at        TIMESTAMP,
+    submitted_at       TIMESTAMP,
+    original_docx_url  TEXT,
+    original_docx_name TEXT,
+    created_at         TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at         TIMESTAMP NOT NULL DEFAULT NOW()
+  );
+
+  -- Historial de versiones: el guardado automático nunca agrega una
+  -- fila aquí (solo actualiza report_documents.content), el guardado
+  -- manual sí. Restaurar una versión vieja también agrega una fila
+  -- nueva con ese contenido — el historial nunca se reescribe.
+  CREATE TABLE IF NOT EXISTS report_document_versions (
+    id          SERIAL PRIMARY KEY,
+    document_id INTEGER NOT NULL REFERENCES report_documents(id) ON DELETE CASCADE,
+    content     JSONB NOT NULL,
+    label       TEXT,
+    created_by  INTEGER REFERENCES users(id),
+    created_at  TIMESTAMP NOT NULL DEFAULT NOW()
+  );
+
+  -- Comentarios del revisor: generales (anchor_from/anchor_to NULL) o
+  -- sobre un fragmento concreto del texto (con su posición y una cita
+  -- textual, para poder mostrarlo aunque el documento cambie después).
+  CREATE TABLE IF NOT EXISTS report_document_comments (
+    id          SERIAL PRIMARY KEY,
+    document_id INTEGER NOT NULL REFERENCES report_documents(id) ON DELETE CASCADE,
+    author_id   INTEGER NOT NULL REFERENCES users(id),
+    body        TEXT NOT NULL,
+    anchor_from INTEGER,
+    anchor_to   INTEGER,
+    quote       TEXT,
+    resolved    BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at  TIMESTAMP NOT NULL DEFAULT NOW()
+  );
+
   -- ── Trigger: mantiene updated_at al día en cada UPDATE ──────
   -- Único trigger del sistema: es infraestructura pura (una marca de
   -- tiempo), no lógica de negocio, así que no hay ambigüedad de
@@ -196,6 +268,10 @@ const SCHEMA_SQL = `
 
   DROP TRIGGER IF EXISTS trg_attentions_updated_at ON attentions;
   CREATE TRIGGER trg_attentions_updated_at BEFORE UPDATE ON attentions
+    FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+  DROP TRIGGER IF EXISTS trg_report_documents_updated_at ON report_documents;
+  CREATE TRIGGER trg_report_documents_updated_at BEFORE UPDATE ON report_documents
     FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 `;
 

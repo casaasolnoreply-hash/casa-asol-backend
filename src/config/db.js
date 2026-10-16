@@ -156,9 +156,71 @@ const migrateDB = async () => {
   // del contenido público.
   await pool.query("ALTER TABLE attentions ADD COLUMN IF NOT EXISTS images JSONB NOT NULL DEFAULT '[]'::jsonb");
 
+  // Integrantes de una actividad (estudiantes registrados o personas
+  // sueltas por nombre) — ver schema.js para el detalle de la tabla.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS attention_participants (
+      id             SERIAL PRIMARY KEY,
+      attention_id   INTEGER NOT NULL REFERENCES attentions(id) ON DELETE CASCADE,
+      beneficiary_id INTEGER REFERENCES beneficiaries(id) ON DELETE SET NULL,
+      full_name      TEXT,
+      created_at     TIMESTAMP NOT NULL DEFAULT NOW(),
+      CHECK (beneficiary_id IS NOT NULL OR full_name IS NOT NULL)
+    )
+  `);
+
   await pool.query(`DROP TRIGGER IF EXISTS trg_attentions_updated_at ON attentions`);
   await pool.query(`
     CREATE TRIGGER trg_attentions_updated_at BEFORE UPDATE ON attentions
+      FOR EACH ROW EXECUTE FUNCTION set_updated_at()
+  `);
+
+  // Editor de documentos (tipo Word) vinculado a un informe — ver
+  // schema.js para el detalle de las 3 tablas.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS report_documents (
+      id                 SERIAL PRIMARY KEY,
+      report_id          INTEGER NOT NULL UNIQUE REFERENCES reports(id) ON DELETE CASCADE,
+      author_id          INTEGER NOT NULL REFERENCES users(id),
+      content            JSONB NOT NULL DEFAULT '{}'::jsonb,
+      status             TEXT NOT NULL DEFAULT 'borrador'
+                           CHECK (status IN ('borrador', 'enviado', 'en_revision', 'calificado', 'devuelto_a_correccion')),
+      score              TEXT,
+      reviewed_by        INTEGER REFERENCES users(id),
+      reviewed_at        TIMESTAMP,
+      submitted_at       TIMESTAMP,
+      original_docx_url  TEXT,
+      original_docx_name TEXT,
+      created_at         TIMESTAMP NOT NULL DEFAULT NOW(),
+      updated_at         TIMESTAMP NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS report_document_versions (
+      id          SERIAL PRIMARY KEY,
+      document_id INTEGER NOT NULL REFERENCES report_documents(id) ON DELETE CASCADE,
+      content     JSONB NOT NULL,
+      label       TEXT,
+      created_by  INTEGER REFERENCES users(id),
+      created_at  TIMESTAMP NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS report_document_comments (
+      id          SERIAL PRIMARY KEY,
+      document_id INTEGER NOT NULL REFERENCES report_documents(id) ON DELETE CASCADE,
+      author_id   INTEGER NOT NULL REFERENCES users(id),
+      body        TEXT NOT NULL,
+      anchor_from INTEGER,
+      anchor_to   INTEGER,
+      quote       TEXT,
+      resolved    BOOLEAN NOT NULL DEFAULT FALSE,
+      created_at  TIMESTAMP NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query(`DROP TRIGGER IF EXISTS trg_report_documents_updated_at ON report_documents`);
+  await pool.query(`
+    CREATE TRIGGER trg_report_documents_updated_at BEFORE UPDATE ON report_documents
       FOR EACH ROW EXECUTE FUNCTION set_updated_at()
   `);
 };
