@@ -229,7 +229,21 @@ router.post("/:id/submit", auth, async (req, res) => {
       return res.status(409).json({ error: `No se puede enviar un documento en estado "${doc.status}"` });
     }
 
-    res.json(await ReportDocument.submit(id));
+    const updated = await ReportDocument.submit(id);
+
+    // El informe (reports.status) es lo que muestra "Mis informes" y lo
+    // que habilita el panel de Aceptar/Devolver — quien trabaja su
+    // informe como documento de Word en vez del asistente de narrativa
+    // nunca llena periodo/fechas, así que el POST /api/reports/:id/submit
+    // normal (que sí los exige) nunca aplicaría aquí. Se envía el informe
+    // directamente a nivel de modelo, sin esa validación: el contenido
+    // real vive en el documento, no en narrative/stats.
+    const report = await Report.findById(doc.report_id);
+    if (report && (report.status === "borrador" || report.status === "devuelto")) {
+      await Report.submit(doc.report_id);
+    }
+
+    res.json(updated);
   } catch {
     res.status(500).json({ error: "Error del servidor" });
   }
