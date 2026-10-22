@@ -5,7 +5,7 @@ const auth       = require("../middleware/auth");
 const cloudinary = require("../config/cloudinary");
 const Report         = require("../models/Report");
 const ReportDocument = require("../models/ReportDocument");
-const { getScope } = require("../middleware/authorize");
+const { getScope, mergeScope } = require("../middleware/authorize");
 
 // Mismo criterio que routes/reports.js: "verInformes" también da
 // permiso de EDITAR el documento de otro rol (no solo verlo), y
@@ -34,7 +34,14 @@ const upload = multer({
 // trabajados). Mismo alcance que GET /api/reports.
 router.get("/", auth, async (req, res) => {
   try {
-    const scope = await getScope(req, "verInformes");
+    // Igual que en reports.js: alguien con solo "aceptarInformes" (sin
+    // "verInformes") sobre un rol también necesita verlo en la lista
+    // para poder aceptar/devolver esos documentos.
+    const scope = mergeScope(
+      await getScope(req, "verInformes"),
+      await getScope(req, "verInformesPorUsuario"),
+      await getScope(req, "aceptarInformes"),
+    );
     let filters;
     if (scope === "all") {
       filters = { role: req.query.role || undefined };

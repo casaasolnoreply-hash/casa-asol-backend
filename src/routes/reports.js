@@ -3,7 +3,7 @@ const auth   = require("../middleware/auth");
 const Report = require("../models/Report");
 const Role   = require("../models/Role");
 const { getReportFields, getConfiguredRoles, flattenNarrativeFields } = require("../config/reportFields");
-const { getScope } = require("../middleware/authorize");
+const { getScope, mergeScope } = require("../middleware/authorize");
 
 // Antes esto era una lista fija de roles en el código
 // (admin/desarrollador/las-dos-directoras). Ahora es configurable
@@ -97,7 +97,14 @@ const validatePayload = (role, { periodType, periodStart, periodEnd, stats, narr
 // rol ver/crear informes, ya que ellos no tienen uno propio).
 router.get("/available-roles", auth, async (req, res) => {
   try {
-    const scope = await getScope(req, "verInformesPorUsuario");
+    // Cualquiera de los tres permisos sobre informes de otros roles
+    // justifica ver ese rol en el selector — no solo
+    // "verInformesPorUsuario" (ver mergeScope en middleware/authorize.js).
+    const scope = mergeScope(
+      await getScope(req, "verInformesPorUsuario"),
+      await getScope(req, "verInformes"),
+      await getScope(req, "aceptarInformes"),
+    );
     const roles = await Role.findAll();
     const configured = getConfiguredRoles();
     res.json(
@@ -123,7 +130,14 @@ router.get("/config/:role", auth, (req, res) => {
 // propio.
 router.get("/", auth, async (req, res) => {
   try {
-    const scope = await getScope(req, "verInformes");
+    // Igual que en /available-roles: "aceptarInformes" o
+    // "verInformesPorUsuario" por sí solos también deben traer esos
+    // informes a la lista, no solo "verInformes".
+    const scope = mergeScope(
+      await getScope(req, "verInformes"),
+      await getScope(req, "verInformesPorUsuario"),
+      await getScope(req, "aceptarInformes"),
+    );
     let filters;
     if (scope === "all") {
       filters = { role: req.query.role || undefined };

@@ -51,6 +51,20 @@ const getScope = async (req, key) => {
   return scopeValue(role?.permissions, key);
 };
 
+// Une varios alcances escalables en uno solo (el más amplio de todos):
+// "all" si cualquiera lo es, si no la unión de los roles de los que
+// sean arreglo, o "none" si ninguno aporta nada. Para listar informes/
+// documentos, alguien con SOLO "aceptarInformes" sobre un rol (sin
+// "verInformes" ni "verInformesPorUsuario") igual necesita verlos en
+// la lista para poder aceptarlos/devolverlos — antes esas rutas solo
+// miraban "verInformes" y lo dejaban totalmente ciego.
+const mergeScope = (...scopes) => {
+  if (scopes.includes("all")) return "all";
+  const roles = new Set();
+  for (const s of scopes) if (Array.isArray(s)) for (const r of s) roles.add(r);
+  return roles.size ? [...roles] : "none";
+};
+
 // requireScoped("verInformes") — deja pasar si el alcance no es
 // "none" (es decir, "all" o una lista con al menos un rol), y deja
 // el resultado en req.permScope[key] para que la ruta filtre según
@@ -63,4 +77,4 @@ const requireScoped = (key) => async (req, res, next) => {
   return next();
 };
 
-module.exports = { requireRole, requirePermission, isDeveloper, scopeValue, getScope, requireScoped };
+module.exports = { requireRole, requirePermission, isDeveloper, scopeValue, getScope, mergeScope, requireScoped };
