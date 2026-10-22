@@ -1,6 +1,6 @@
 const router = require("express").Router();
 const auth   = require("../middleware/auth");
-const { requireRole } = require("../middleware/authorize");
+const { requirePermission } = require("../middleware/authorize");
 const { getData, setData } = require("../config/db");
 const { translateValue, TRANSLATABLE_KEYS } = require("../services/contentTranslator");
 const { isConfigured: deeplConfigured } = require("../services/deepl");
@@ -41,8 +41,10 @@ router.get("/:key", async (req, res) => {
   }
 });
 
-// PUT /api/data/:key  — editar contenido del sitio: solo desarrollador
-router.put("/:key", auth, requireRole("desarrollador"), async (req, res) => {
+// PUT /api/data/:key — editar contenido del sitio: requiere "manageContent"
+// (desarrollador siempre lo tiene por fullAccess), configurable por rol
+// desde "Roles y permisos".
+router.put("/:key", auth, requirePermission("manageContent"), async (req, res) => {
   try {
     const { key } = req.params;
     if (!VALID_KEYS.includes(key)) {
