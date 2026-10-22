@@ -1,11 +1,21 @@
 const bcrypt = require("bcryptjs");
 const { pool } = require("../config/db");
 
-const PUBLIC_FIELDS = "id, username, email, role, active, photo_url, must_change_password, created_at, last_login";
+const PUBLIC_FIELDS = "id, username, email, role, active, photo_url, must_change_password, display_order, created_at, last_login";
 
+// Orden manual (como "Equipo") — display_order lo decide quien
+// reordena desde el panel; al empate (cuentas nuevas sin acomodar
+// todavía) cae a alfabético.
 const findAll = async () => {
-  const { rows } = await pool.query(`SELECT ${PUBLIC_FIELDS} FROM users ORDER BY created_at ASC`);
+  const { rows } = await pool.query(`SELECT ${PUBLIC_FIELDS} FROM users ORDER BY display_order ASC, LOWER(username) ASC`);
   return rows;
+};
+
+// Guarda el nuevo orden — se manda la lista completa de ids en el
+// orden deseado (mismo criterio que "Equipo"/tipos de actividad: el
+// panel manda el arreglo ya reordenado, no movimientos sueltos).
+const reorder = async (orderedIds) => {
+  await Promise.all(orderedIds.map((id, index) => pool.query("UPDATE users SET display_order = $1 WHERE id = $2", [index, id])));
 };
 
 const findById = async (id) => {
@@ -17,6 +27,17 @@ const findByUsername = async (username) => {
   const { rows } = await pool.query(
     "SELECT id, username, email, password, role, photo_url, active, must_change_password FROM users WHERE LOWER(username) = LOWER($1)",
     [username]
+  );
+  return rows[0] || null;
+};
+
+// Login: la persona puede escribir su usuario O su correo en el mismo
+// campo — "username" no deja poner espacios así que no choca con un
+// correo real.
+const findByUsernameOrEmail = async (value) => {
+  const { rows } = await pool.query(
+    "SELECT id, username, email, password, role, photo_url, active, must_change_password FROM users WHERE LOWER(username) = LOWER($1) OR LOWER(email) = LOWER($1)",
+    [value]
   );
   return rows[0] || null;
 };
@@ -54,9 +75,12 @@ const usernameTaken = async (username) => {
 // usuario la cambie por una propia.
 const create = async ({ username, email, password, role, mustChangePassword = true }) => {
   const hash = await bcrypt.hash(password, 12);
+  // Entra al final de la lista por defecto — se puede subir desde el
+  // panel después, igual que un miembro nuevo de "Equipo".
   const { rows } = await pool.query(
-    `INSERT INTO users (username, email, password, role, must_change_password)
-     VALUES ($1, $2, $3, $4, $5) RETURNING id, username, email, role`,
+    `INSERT INTO users (username, email, password, role, must_change_password, display_order)
+     VALUES ($1, $2, $3, $4, $5, (SELECT COALESCE(MAX(display_order), 0) + 1 FROM users))
+     RETURNING id, username, email, role`,
     [username.trim(), email?.trim() || null, hash, role, mustChangePassword]
   );
   return rows[0];
@@ -91,7 +115,7 @@ const remove = async (id) => {
 };
 
 module.exports = {
-  findAll, findById, findByUsername, findByEmail, findByGoogleSub, usernameTaken, getPasswordHash,
-  create, updateRole, updateActive, updateEmail, updatePhoto, updateLastLogin,
+  findAll, findById, findByUsername, findByUsernameOrEmail, findByEmail, findByGoogleSub, usernameTaken, getPasswordHash,
+  create, updateRole, updateActive, updateEmail, updatePhoto, updateLastLogin, reorder,
   linkGoogle, updatePassword, verifyPassword, remove,
 };

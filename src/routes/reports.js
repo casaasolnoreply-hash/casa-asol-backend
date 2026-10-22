@@ -228,6 +228,9 @@ router.post("/:id/accept", auth, async (req, res) => {
 
     const existing = await Report.findById(id);
     if (!existing) return res.status(404).json({ error: "Informe no encontrado" });
+    if (existing.author_id === req.admin.id) {
+      return res.status(403).json({ error: "No puedes aceptar tu propio informe" });
+    }
     if (!canSeeRole(await getScope(req, "aceptarInformes"), existing.role)) {
       return res.status(403).json({ error: "No tienes permiso para esta acción" });
     }
@@ -250,6 +253,9 @@ router.post("/:id/return", auth, async (req, res) => {
 
     const existing = await Report.findById(id);
     if (!existing) return res.status(404).json({ error: "Informe no encontrado" });
+    if (existing.author_id === req.admin.id) {
+      return res.status(403).json({ error: "No puedes devolver tu propio informe" });
+    }
     if (!canSeeRole(await getScope(req, "aceptarInformes"), existing.role)) {
       return res.status(403).json({ error: "No tienes permiso para esta acción" });
     }

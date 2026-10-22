@@ -20,6 +20,14 @@ const findByName = async (name) => {
 
 const exists = async (name) => !!(await findByName(name));
 
+const updateLabel = async (name, label, description) => {
+  const { rows } = await pool.query(
+    "UPDATE roles SET label = $1, description = $2 WHERE name = $3 RETURNING *",
+    [label, description || "", name]
+  );
+  return rows[0] || null;
+};
+
 const updatePermissions = async (name, permissions) => {
   const { rows } = await pool.query(
     "UPDATE roles SET permissions = $1 WHERE name = $2 RETURNING *",
@@ -42,6 +50,12 @@ const remove = async (name) => {
   return rowCount > 0;
 };
 
+// Registra que este nombre se borró a propósito, para que seedRoles()
+// no lo vuelva a crear en el próximo arranque si era un rol de fábrica.
+const markDeleted = async (name) => {
+  await pool.query("INSERT INTO deleted_roles (name) VALUES ($1) ON CONFLICT (name) DO NOTHING", [name]);
+};
+
 // Cuántas cuentas tienen asignado este rol — para impedir borrarlo
 // mientras alguien lo esté usando.
 const countUsers = async (name) => {
@@ -49,4 +63,4 @@ const countUsers = async (name) => {
   return rows[0].n;
 };
 
-module.exports = { findAll, findSelfRequestable, findByName, exists, updatePermissions, create, remove, countUsers };
+module.exports = { findAll, findSelfRequestable, findByName, exists, updateLabel, updatePermissions, create, remove, markDeleted, countUsers };

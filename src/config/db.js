@@ -56,9 +56,34 @@ const initDB = async () => {
 // ── Migraciones aditivas para BDs existentes que no pasaron por
 //    un reset (agregar columnas nuevas es seguro; no se tocan datos) ──
 const migrateDB = async () => {
+  // Tabla nueva — CREATE TABLE IF NOT EXISTS es seguro en bases ya
+  // existentes (ver schema.js para el porqué de esta tabla).
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS deleted_roles (
+      name       TEXT PRIMARY KEY,
+      deleted_at TIMESTAMP NOT NULL DEFAULT NOW()
+    )
+  `);
+
   await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS photo_url TEXT");
   await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS google_sub TEXT UNIQUE");
   await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN NOT NULL DEFAULT FALSE");
+
+  // Orden manual de "Usuarios" (como el de "Equipo") — solo la primera
+  // vez que se agrega la columna se rellena con el orden alfabético
+  // que ya se veía, para no perder lo que un admin ya haya acomodado
+  // a mano en arranques posteriores.
+  const { rows: hasDisplayOrder } = await pool.query(
+    "SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'display_order'"
+  );
+  if (hasDisplayOrder.length === 0) {
+    await pool.query("ALTER TABLE users ADD COLUMN display_order INTEGER NOT NULL DEFAULT 0");
+    await pool.query(`
+      UPDATE users SET display_order = sub.rn
+      FROM (SELECT id, ROW_NUMBER() OVER (ORDER BY LOWER(username)) AS rn FROM users) sub
+      WHERE users.id = sub.id
+    `);
+  }
 
   // updated_at + trigger (ver schema.js para la versión "de fábrica")
   await pool.query("ALTER TABLE roles     ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP NOT NULL DEFAULT NOW()");
@@ -226,8 +251,15 @@ const migrateDB = async () => {
 };
 
 // ── Sembrar roles ──────────────────────────────────────────
+// Un rol de fábrica que un admin borró desde el panel (ver
+// DELETE /api/roles/:name) queda registrado en deleted_roles — se
+// salta aquí para que no "reviva" solo porque el servidor reinició.
 const seedRoles = async () => {
-  for (const r of ROLE_DEFINITIONS) {
+  const { rows } = await pool.query("SELECT name FROM deleted_roles");
+  const deleted = new Set(rows.map((r) => r.name));
+  const active = ROLE_DEFINITIONS.filter((r) => !deleted.has(r.name));
+
+  for (const r of active) {
     await pool.query(
       `INSERT INTO roles (name, label, description, permissions, self_requestable)
        VALUES ($1, $2, $3, $4, $5)
@@ -235,7 +267,7 @@ const seedRoles = async () => {
       [r.name, r.label, r.description, JSON.stringify(r.permissions || {}), !!r.selfRequestable]
     );
   }
-  await backfillRolePermissions();
+  await backfillRolePermissions(active);
 };
 
 // Para un rol que YA existía antes de agregar una llave de permiso
@@ -246,8 +278,8 @@ const seedRoles = async () => {
 // haya personalizado desde el panel: `defaults || permissions` deja
 // ganar a `permissions` (lo que ya hay) en cualquier llave repetida,
 // y solo rellena las que faltan.
-const backfillRolePermissions = async () => {
-  for (const r of ROLE_DEFINITIONS) {
+const backfillRolePermissions = async (roleDefinitions) => {
+  for (const r of roleDefinitions) {
     await pool.query(
       `UPDATE roles SET permissions = $2::jsonb || permissions WHERE name = $1`,
       [r.name, JSON.stringify(r.permissions || {})]

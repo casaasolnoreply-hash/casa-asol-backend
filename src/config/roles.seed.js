@@ -37,9 +37,10 @@ const ROLE_DEFINITIONS = [
     label: "Administrador",
     description: "Gestión de usuarios, contenido del sitio, mensajes y ajustes.",
     permissions: {
-      manageUsers: true, manageContent: true, manageSettings: true, viewMessages: true,
+      manageUsers: true, verUsuarios: true, restablecerCredenciales: true,
+      manageContent: true, manageSettings: true, viewMessages: true,
       verImagenes: true, verInformes: true, verInformesPorUsuario: true, aceptarInformes: true, crearInformes: true,
-      verEstudiantes: true, crearActividades: true, gestionarTiposActividad: true,
+      verEstudiantes: true, manageBeneficiaries: true, crearActividades: true, gestionarTiposActividad: true, gestionarRoles: true,
     },
     selfRequestable: false,
   },
@@ -130,7 +131,11 @@ const ROLE_DEFINITIONS = [
 // Llaves de permiso simples (sí/no) editables desde el panel.
 // "fullAccess" queda fuera a propósito: es exclusivo del rol
 // "desarrollador" y nunca se otorga por esta vía.
-const PERMISSION_KEYS = ["manageUsers", "manageContent", "manageSettings", "viewMessages", "manageBeneficiaries", "gestionarTiposActividad"];
+const PERMISSION_KEYS = [
+  "manageUsers", "verUsuarios", "restablecerCredenciales",
+  "manageContent", "manageSettings", "viewMessages", "manageBeneficiaries",
+  "gestionarTiposActividad", "gestionarRoles",
+];
 
 // Llaves de permiso "escalables": en vez de solo sí/no, cada una
 // puede valer `true` (todos los roles), `false`/ausente (ninguno) o

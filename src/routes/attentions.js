@@ -40,13 +40,33 @@ const validateCustomTypes = (items) => {
   return null;
 };
 
-const validatePayload = (role, { attentionDate, type, beneficiaryId, participants }) => {
+// A qué categoría pertenece un tipo, dentro del expediente de ese rol
+// — para revisar el alcance por categoría de "crearActividades".
+const categoryOfType = (config, typeKey) =>
+  config.categories.find((c) => c.types.some((t) => t.key === typeKey))?.name;
+
+// "crearActividades" ahora es por categoría (ver roles.seed.js/
+// RolesTab.jsx): true = todas las categorías de su propio expediente,
+// un arreglo = solo esas categorías, por nombre. Antes el arreglo
+// significaba "otros roles" pero nunca se usaba así en la práctica —
+// este es el primer lugar que de verdad lee su contenido.
+const categoryScopeAllows = (scope, config, typeKey) => {
+  if (scope === "all") return true;
+  if (!Array.isArray(scope) || !scope.length) return false;
+  const categoryName = categoryOfType(config, typeKey);
+  return !!categoryName && scope.includes(categoryName);
+};
+
+const validatePayload = (role, { attentionDate, type, beneficiaryId, participants }, categoryScope) => {
   const config = getAttentionFields(role);
   if (!config) return { error: `El rol "${role}" todavía no tiene expediente de atenciones configurado` };
   if (!attentionDate || isNaN(Date.parse(attentionDate))) return { error: "attentionDate es obligatoria y debe ser una fecha válida" };
 
   const typeDef = config.types.find((t) => t.key === type);
   if (!typeDef) return { error: "Tipo de atención inválido para este rol" };
+  if (categoryScope !== undefined && !categoryScopeAllows(categoryScope, config, type)) {
+    return { error: `No tienes permiso para registrar "${typeDef.label}" (categoría "${categoryOfType(config, type)}")` };
+  }
   if (typeDef.requiresBeneficiary && !beneficiaryId && !participants?.length) {
     return { error: `"${typeDef.label}" necesita por lo menos un integrante` };
   }
@@ -185,7 +205,8 @@ router.post("/", auth, canCreate, async (req, res) => {
     const { error: participantsError, participants } = sanitizeParticipants(req.body.participants);
     if (participantsError) return res.status(400).json({ error: participantsError });
 
-    const err = validatePayload(role, { ...req.body, beneficiaryId, participants });
+    const categoryScope = await getScope(req, "crearActividades");
+    const err = validatePayload(role, { ...req.body, beneficiaryId, participants }, categoryScope);
     if (err) return res.status(400).json(err);
 
     if (beneficiaryId) {
@@ -225,12 +246,18 @@ router.put("/:id", auth, async (req, res) => {
     const { error: participantsError, participants } = sanitizeParticipants(req.body.participants);
     if (participantsError) return res.status(400).json({ error: participantsError });
 
+    // El alcance por categoría solo se revisa si de verdad está
+    // CAMBIANDO el tipo — si ya existía con ese tipo (p.ej. un rol que
+    // después perdió acceso a esa categoría), seguir editando notas o
+    // imágenes no debería quedar bloqueado por eso.
+    const isChangingType = req.body.type !== undefined && req.body.type !== existing.type;
+    const categoryScope = isChangingType ? await getScope(req, "crearActividades") : undefined;
     const err = validatePayload(existing.role, {
       attentionDate: req.body.attentionDate || existing.attention_date,
       type: req.body.type || existing.type,
       beneficiaryId: existing.beneficiary_id,
       participants: participants ?? existing.participants,
-    });
+    }, categoryScope);
     if (err) return res.status(400).json(err);
 
     for (const p of participants || []) {

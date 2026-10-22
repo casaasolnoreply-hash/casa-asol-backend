@@ -66,7 +66,7 @@ router.post("/login", loginLimiter, async (req, res) => {
       return res.status(400).json({ error: "Datos inválidos" });
     }
 
-    const dbUser = await User.findByUsername(user.trim());
+    const dbUser = await User.findByUsernameOrEmail(user.trim());
     const passOk = await User.verifyPassword(pass, dbUser?.active ? dbUser.password : null);
 
     if (!dbUser || !dbUser.active || !passOk) {

@@ -236,6 +236,9 @@ router.post("/:id/start-review", auth, async (req, res) => {
 
     const doc = await ReportDocument.findById(id);
     if (!doc) return res.status(404).json({ error: "Documento no encontrado" });
+    if (doc.author_id === req.admin.id) {
+      return res.status(403).json({ error: "No puedes revisar tu propio documento" });
+    }
     if (!(await canGradeReport(req, { role: doc.role }))) return res.status(403).json({ error: "No tienes permiso para esta acción" });
     if (doc.status !== "enviado") {
       return res.status(409).json({ error: `Solo se puede tomar para revisión un documento "enviado" (está en "${doc.status}")` });
@@ -255,6 +258,9 @@ router.post("/:id/grade", auth, async (req, res) => {
 
     const doc = await ReportDocument.findById(id);
     if (!doc) return res.status(404).json({ error: "Documento no encontrado" });
+    if (doc.author_id === req.admin.id) {
+      return res.status(403).json({ error: "No puedes calificar tu propio documento" });
+    }
     if (!(await canGradeReport(req, { role: doc.role }))) return res.status(403).json({ error: "No tienes permiso para esta acción" });
     if (doc.status !== "en_revision") {
       return res.status(409).json({ error: `Solo se puede calificar un documento "en_revision" (está en "${doc.status}")` });
@@ -278,6 +284,9 @@ router.post("/:id/return", auth, async (req, res) => {
 
     const doc = await ReportDocument.findById(id);
     if (!doc) return res.status(404).json({ error: "Documento no encontrado" });
+    if (doc.author_id === req.admin.id) {
+      return res.status(403).json({ error: "No puedes devolver tu propio documento" });
+    }
     if (!(await canGradeReport(req, { role: doc.role }))) return res.status(403).json({ error: "No tienes permiso para esta acción" });
     if (doc.status !== "en_revision") {
       return res.status(409).json({ error: `Solo se puede devolver un documento "en_revision" (está en "${doc.status}")` });

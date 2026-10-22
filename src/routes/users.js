@@ -1,15 +1,30 @@
 const router = require("express").Router();
 const auth   = require("../middleware/auth");
-const { requireRole } = require("../middleware/authorize");
+const { requirePermission, isDeveloper } = require("../middleware/authorize");
 const User        = require("../models/User");
 const Role        = require("../models/Role");
 const UserRequest = require("../models/UserRequest");
 const { suggestUsername, generateTempPassword } = require("../utils/credentials");
 const { sendEmail, credentialsEmail } = require("../services/email");
 
-// Gestión de usuarios: admin y desarrollador. Solo desarrollador puede
-// otorgar o quitar el rol "desarrollador" (acceso total).
-const manageUsers = requireRole("admin", "desarrollador");
+// Gestión de usuarios: tres permisos separados (antes era uno solo,
+// todo o nada). "manageUsers" puede crear/editar rol-correo-estado/
+// eliminar/aprobar-rechazar solicitudes. "verUsuarios" solo deja ver
+// la lista y las solicitudes, sin poder tocar nada. "restablecerCredenciales"
+// deja cambiarle la contraseña a alguien sin darle control sobre su
+// rol o su cuenta. "manageUsers" implica los otros dos. admin y
+// desarrollador los tienen todos por defecto; configurable para
+// cualquier otro rol desde "Roles y permisos".
+const hasPermission = async (req, ...keys) => {
+  if (isDeveloper(req)) return true;
+  const role = await Role.findByName(req.admin?.role);
+  return keys.some((k) => role?.permissions?.[k]);
+};
+const manageUsers = requirePermission("manageUsers");
+const canView = async (req, res, next) =>
+  (await hasPermission(req, "manageUsers", "verUsuarios"))
+    ? next()
+    : res.status(403).json({ error: "No tienes permiso para esta acción" });
 
 const assertAssignableRole = async (roleName, actorRole) => {
   const role = await Role.findByName(roleName);
@@ -20,10 +35,29 @@ const assertAssignableRole = async (roleName, actorRole) => {
   return null;
 };
 
-// GET /api/users
-router.get("/", auth, manageUsers, async (_req, res) => {
+// GET /api/users — "desarrollador" nunca aparece en el listado para
+// nadie más que otra cuenta desarrollador (acceso total, oculta por
+// completo para el resto — ver también GET /api/roles).
+router.get("/", auth, canView, async (req, res) => {
   try {
-    res.json(await User.findAll());
+    const users = await User.findAll();
+    res.json(isDeveloper(req) ? users : users.filter((u) => u.role !== "desarrollador"));
+  } catch {
+    res.status(500).json({ error: "Error del servidor" });
+  }
+});
+
+// PUT /api/users/reorder — { order: [id, id, ...] } con el orden
+// completo deseado (como "Equipo"). Requiere "manageUsers".
+router.put("/reorder", auth, manageUsers, async (req, res) => {
+  try {
+    const order = req.body?.order;
+    if (!Array.isArray(order) || !order.every((id) => Number.isInteger(id))) {
+      return res.status(400).json({ error: "'order' debe ser una lista de ids" });
+    }
+    await User.reorder(order);
+    const users = await User.findAll();
+    res.json(isDeveloper(req) ? users : users.filter((u) => u.role !== "desarrollador"));
   } catch {
     res.status(500).json({ error: "Error del servidor" });
   }
@@ -32,7 +66,7 @@ router.get("/", auth, manageUsers, async (_req, res) => {
 // ── Solicitudes de acceso ──────────────────────────────────
 
 // GET /api/users/requests — solicitudes pendientes
-router.get("/requests", auth, manageUsers, async (_req, res) => {
+router.get("/requests", auth, canView, async (_req, res) => {
   try {
     res.json(await UserRequest.findPending());
   } catch {
@@ -145,14 +179,29 @@ router.post("/", auth, manageUsers, async (req, res) => {
   }
 });
 
-// PUT /api/users/:id
-router.put("/:id", auth, manageUsers, async (req, res) => {
+// PUT /api/users/:id — cambiar la contraseña solo pide
+// "restablecerCredenciales" (o "manageUsers"); cambiar rol/correo/
+// estado activo pide "manageUsers" específicamente.
+router.put("/:id", auth, async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
     if (isNaN(id)) return res.status(400).json({ error: "ID inválido" });
 
+    const { email, role, active, password } = req.body;
+    const changesData = role !== undefined || email !== undefined || active !== undefined;
+    const changesCredentials = password !== undefined;
+
+    if (changesData && !(await hasPermission(req, "manageUsers"))) {
+      return res.status(403).json({ error: "No tienes permiso para esta acción" });
+    }
+    if (changesCredentials && !(await hasPermission(req, "manageUsers", "restablecerCredenciales"))) {
+      return res.status(403).json({ error: "No tienes permiso para esta acción" });
+    }
+    if (!changesData && !changesCredentials) {
+      return res.status(400).json({ error: "Nada que actualizar" });
+    }
+
     if (req.admin.id === id) {
-      const { role, active } = req.body;
       if (role !== undefined && role !== req.admin.role) {
         return res.status(400).json({ error: "No puedes cambiar tu propio rol" });
       }
@@ -163,8 +212,6 @@ router.put("/:id", auth, manageUsers, async (req, res) => {
 
     const target = await User.findById(id);
     if (!target) return res.status(404).json({ error: "Usuario no encontrado" });
-
-    const { email, role, active, password } = req.body;
 
     if (password !== undefined) {
       if (typeof password !== "string" || password.length < 8) {

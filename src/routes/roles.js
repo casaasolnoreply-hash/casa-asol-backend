@@ -1,6 +1,6 @@
 const router = require("express").Router();
 const auth   = require("../middleware/auth");
-const { requireRole } = require("../middleware/authorize");
+const { requirePermission, isDeveloper } = require("../middleware/authorize");
 const Role   = require("../models/Role");
 const { getData, setData } = require("../config/db");
 const { ROLE_DEFINITIONS, PERMISSION_KEYS, SCOPED_PERMISSION_KEYS, OPERATIONAL_DEFAULTS } = require("../config/roles.seed");
@@ -16,6 +16,23 @@ const slugify = (text) =>
   text.normalize("NFD").replace(/[̀-ͯ]/g, "")
     .toLowerCase().trim().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
 
+// Cualquiera de los permisos que necesita ver la lista de roles: quien
+// gestiona roles en sí, quien gestiona usuarios (selector de "Nuevo
+// usuario") y quien solo VE usuarios (necesita la etiqueta del rol de
+// cada cuenta, aunque sea en modo solo lectura) — por eso esta ruta
+// acepta cualquiera de los tres, no solo "gestionarRoles" como el
+// resto de este archivo.
+const canSeeRoles = async (req, res, next) => {
+  if (isDeveloper(req)) return next();
+  try {
+    const role = await Role.findByName(req.admin?.role);
+    if (role?.permissions?.manageUsers || role?.permissions?.gestionarRoles || role?.permissions?.verUsuarios) return next();
+    return res.status(403).json({ error: "No tienes permiso para esta acción" });
+  } catch {
+    return res.status(500).json({ error: "Error del servidor" });
+  }
+};
+
 // GET /api/roles/public — roles que se pueden elegir en el formulario
 // público "Solicitar acceso" (no incluye admin/desarrollador).
 router.get("/public", async (_req, res) => {
@@ -26,13 +43,17 @@ router.get("/public", async (_req, res) => {
   }
 });
 
-// GET /api/roles — lista completa con permisos, para el panel de usuarios.
-// "removable" (calculado, no se guarda) marca los roles creados desde
-// el panel — los de fábrica (ROLE_DEFINITIONS) nunca se pueden borrar.
-router.get("/", auth, requireRole("admin", "desarrollador"), async (_req, res) => {
+// GET /api/roles — lista completa con permisos, para el panel de
+// usuarios y el de roles. "removable" (calculado, no se guarda) marca
+// qué roles se pueden borrar desde el panel — cualquiera menos
+// "desarrollador", que siempre tiene acceso total y nunca se toca.
+router.get("/", auth, canSeeRoles, async (req, res) => {
   try {
     const roles = await Role.findAll();
-    res.json(roles.map((r) => ({ ...r, removable: !FIXED_ROLE_NAMES.has(r.name) })));
+    // "desarrollador" nunca aparece para nadie más que otra cuenta
+    // desarrollador — oculto por completo, igual que en GET /api/users.
+    const visible = isDeveloper(req) ? roles : roles.filter((r) => r.name !== "desarrollador");
+    res.json(visible.map((r) => ({ ...r, removable: r.name !== "desarrollador" })));
   } catch {
     res.status(500).json({ error: "Error del servidor" });
   }
@@ -42,8 +63,8 @@ router.get("/", auth, requireRole("admin", "desarrollador"), async (_req, res) =
 // normales (mismo default que cualquier rol operativo simple),
 // Actividades (categorías compartidas) e Informes (plantilla
 // genérica) — ver attentionFields.js/reportFields.js "dynamicRoles".
-// Exclusivo de desarrollador, igual que PUT.
-router.post("/", auth, requireRole("desarrollador"), async (req, res) => {
+// Requiere "gestionarRoles", igual que PUT.
+router.post("/", auth, requirePermission("gestionarRoles"), async (req, res) => {
   try {
     const label = (req.body?.label || "").trim();
     if (!label) return res.status(400).json({ error: "El rol necesita una etiqueta" });
@@ -90,13 +111,16 @@ router.post("/", auth, requireRole("desarrollador"), async (req, res) => {
   }
 });
 
-// DELETE /api/roles/:name — solo roles creados desde el panel (nunca
-// los de fábrica) y solo si ninguna cuenta lo tiene asignado.
-router.delete("/:name", auth, requireRole("desarrollador"), async (req, res) => {
+// DELETE /api/roles/:name — cualquier rol menos "desarrollador" (acceso
+// total, nunca se borra) y solo si ninguna cuenta lo tiene asignado.
+// Incluye los roles de fábrica (ROLE_DEFINITIONS): si se borra uno,
+// Role.markDeleted lo registra en deleted_roles para que seedRoles()
+// no lo vuelva a crear en el próximo arranque.
+router.delete("/:name", auth, requirePermission("gestionarRoles"), async (req, res) => {
   try {
     const { name } = req.params;
-    if (FIXED_ROLE_NAMES.has(name)) {
-      return res.status(400).json({ error: "Este rol viene con el sistema y no se puede eliminar" });
+    if (name === "desarrollador") {
+      return res.status(400).json({ error: "El rol desarrollador no se puede eliminar: siempre tiene acceso total" });
     }
     if (!(await Role.exists(name))) return res.status(404).json({ error: "Rol no encontrado" });
 
@@ -106,6 +130,7 @@ router.delete("/:name", auth, requireRole("desarrollador"), async (req, res) => 
     }
 
     await Role.remove(name);
+    await Role.markDeleted(name);
     attentionFields.removeDynamicRole(name);
     reportFields.removeDynamicRole(name);
 
@@ -115,22 +140,22 @@ router.delete("/:name", auth, requireRole("desarrollador"), async (req, res) => 
 
     res.json({ ok: true });
   } catch (err) {
-    // Violación de llave foránea: quedan actividades o informes
-    // guardados con este rol (attentions.role/reports.role), o ya se
-    // generó al menos un código de informe (report_sequences nunca se
-    // borra, para no reutilizar un número — ver schema.js) — en
-    // cualquier caso, hay historial real detrás de este rol.
+    // Violación de llave foránea: queda historial real detrás de este
+    // rol (actividades, informes, códigos de informe generados —
+    // report_sequences nunca se borra, ver schema.js — o solicitudes
+    // de acceso que lo pidieron).
     if (err.code === "23503") {
-      return res.status(409).json({ error: "No se puede eliminar: este rol ya tiene actividades, informes o códigos de informe generados" });
+      return res.status(409).json({ error: "No se puede eliminar: este rol ya tiene historial asociado (actividades, informes o solicitudes de acceso)" });
     }
     res.status(500).json({ error: "Error del servidor" });
   }
 });
 
-// PUT /api/roles/:name — otorgar/quitar permisos a un rol.
-// Exclusivo de desarrollador: es la única cuenta que puede decidir
-// qué puede ver o hacer cada rol.
-router.put("/:name", auth, requireRole("desarrollador"), async (req, res) => {
+// PUT /api/roles/:name — otorgar/quitar permisos y/o cambiar la
+// etiqueta/descripción de un rol. Requiere "gestionarRoles"
+// (desarrollador siempre lo tiene por fullAccess) — el rol
+// "desarrollador" en sí nunca se edita, siempre tiene acceso total.
+router.put("/:name", auth, requirePermission("gestionarRoles"), async (req, res) => {
   try {
     const { name } = req.params;
     if (name === "desarrollador") {
@@ -140,26 +165,38 @@ router.put("/:name", auth, requireRole("desarrollador"), async (req, res) => {
     const role = await Role.findByName(name);
     if (!role) return res.status(404).json({ error: "Rol no encontrado" });
 
-    const incoming = req.body?.permissions;
-    if (!incoming || typeof incoming !== "object" || Array.isArray(incoming)) {
-      return res.status(400).json({ error: "'permissions' debe ser un objeto" });
+    let updated = role;
+
+    if (req.body?.label !== undefined || req.body?.description !== undefined) {
+      const label = req.body.label !== undefined ? req.body.label.trim() : role.label;
+      if (!label) return res.status(400).json({ error: "El rol necesita una etiqueta" });
+      const description = req.body.description !== undefined ? req.body.description.trim() : role.description;
+      updated = await Role.updateLabel(name, label, description);
     }
 
-    const permissions = {};
-    for (const key of PERMISSION_KEYS) {
-      if (incoming[key] !== undefined) permissions[key] = !!incoming[key];
-    }
-    // Escalables: true (todos), false (ninguno) o un arreglo de
-    // nombres de rol (algunos) — a diferencia de los de arriba, NO
-    // se fuerzan a booleano porque un arreglo es un valor válido.
-    for (const key of SCOPED_PERMISSION_KEYS) {
-      const v = incoming[key];
-      if (v === undefined) continue;
-      if (typeof v === "boolean") permissions[key] = v;
-      else if (Array.isArray(v) && v.every((x) => typeof x === "string")) permissions[key] = v;
+    if (req.body?.permissions !== undefined) {
+      const incoming = req.body.permissions;
+      if (!incoming || typeof incoming !== "object" || Array.isArray(incoming)) {
+        return res.status(400).json({ error: "'permissions' debe ser un objeto" });
+      }
+
+      const permissions = {};
+      for (const key of PERMISSION_KEYS) {
+        if (incoming[key] !== undefined) permissions[key] = !!incoming[key];
+      }
+      // Escalables: true (todos), false (ninguno) o un arreglo de
+      // nombres de rol (algunos) — a diferencia de los de arriba, NO
+      // se fuerzan a booleano porque un arreglo es un valor válido.
+      for (const key of SCOPED_PERMISSION_KEYS) {
+        const v = incoming[key];
+        if (v === undefined) continue;
+        if (typeof v === "boolean") permissions[key] = v;
+        else if (Array.isArray(v) && v.every((x) => typeof x === "string")) permissions[key] = v;
+      }
+
+      updated = await Role.updatePermissions(name, permissions);
     }
 
-    const updated = await Role.updatePermissions(name, permissions);
     res.json(updated);
   } catch {
     res.status(500).json({ error: "Error del servidor" });

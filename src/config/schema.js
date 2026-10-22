@@ -17,6 +17,7 @@ const TABLES_IN_DROP_ORDER = [
   "messages",
   "site_data",
   "users",
+  "deleted_roles",
   "roles",
 ];
 
@@ -32,6 +33,15 @@ const SCHEMA_SQL = `
     updated_at  TIMESTAMP NOT NULL DEFAULT NOW()
   );
 
+  -- Roles de fábrica (ROLE_DEFINITIONS) que un admin eliminó desde el
+  -- panel — sin esta tabla, seedRoles() los volvería a crear en cada
+  -- arranque (ON CONFLICT DO NOTHING solo evita duplicados, no sabe
+  -- que se borraron a propósito).
+  CREATE TABLE IF NOT EXISTS deleted_roles (
+    name       TEXT PRIMARY KEY,
+    deleted_at TIMESTAMP NOT NULL DEFAULT NOW()
+  );
+
   CREATE TABLE IF NOT EXISTS users (
     id         SERIAL PRIMARY KEY,
     username   TEXT      NOT NULL UNIQUE,
@@ -42,6 +52,7 @@ const SCHEMA_SQL = `
     google_sub TEXT      UNIQUE,
     must_change_password BOOLEAN NOT NULL DEFAULT FALSE,
     active     BOOLEAN   NOT NULL DEFAULT TRUE,
+    display_order INTEGER NOT NULL DEFAULT 0,
     created_at TIMESTAMP NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
     last_login TIMESTAMP
