@@ -140,10 +140,14 @@ const migrateDB = async () => {
   await pool.query("ALTER TABLE reports ADD COLUMN IF NOT EXISTS review_comment TEXT");
   await pool.query("ALTER TABLE reports ADD COLUMN IF NOT EXISTS reviewed_by INTEGER REFERENCES users(id)");
   await pool.query("ALTER TABLE reports ADD COLUMN IF NOT EXISTS reviewed_at TIMESTAMP");
+  // "en_revision" se agregó para que "Mis informes" muestre que
+  // alguien ya lo tomó para revisar (ver POST
+  // /api/documents/:id/start-review), en vez de seguir viéndose
+  // "Enviado" hasta que se acepte o se devuelva.
   await pool.query("ALTER TABLE reports DROP CONSTRAINT IF EXISTS reports_status_check");
   await pool.query(`
     ALTER TABLE reports ADD CONSTRAINT reports_status_check
-      CHECK (status IN ('borrador', 'enviado', 'aceptado', 'devuelto'))
+      CHECK (status IN ('borrador', 'enviado', 'en_revision', 'aceptado', 'devuelto'))
   `);
 
   // Un borrador se puede guardar aunque todavía no tenga periodo

@@ -233,8 +233,10 @@ const removeDynamicRole = (name) => {
 const loadDynamicRoles = async () => {
   const Role = require("../models/Role");
   const roles = await Role.findAll();
+  // "desarrollador" es acceso total, no un rol operativo — nunca
+  // registra actividades, así que nunca entra aquí.
   dynamicRoles = roles
-    .filter((r) => !ATTENTION_FIELDS_RAW[r.name])
+    .filter((r) => !ATTENTION_FIELDS_RAW[r.name] && r.name !== "desarrollador")
     .map((r) => ({ name: r.name, label: r.label }));
   rebuild();
 };

@@ -5,7 +5,7 @@ const auth       = require("../middleware/auth");
 const cloudinary = require("../config/cloudinary");
 const Report         = require("../models/Report");
 const ReportDocument = require("../models/ReportDocument");
-const { getScope, mergeScope } = require("../middleware/authorize");
+const { getScope, mergeScope, isDeveloper } = require("../middleware/authorize");
 
 // Mismo criterio que routes/reports.js: "verInformes" también da
 // permiso de EDITAR el documento de otro rol (no solo verlo), y
@@ -57,7 +57,11 @@ router.get("/", auth, async (req, res) => {
     if (req.query.authorId) filters.authorId = parseInt(req.query.authorId, 10);
     if (req.query.dateFrom) filters.dateFrom = req.query.dateFrom;
     if (req.query.dateTo) filters.dateTo = req.query.dateTo;
-    res.json(await ReportDocument.findAll(filters));
+    const list = await ReportDocument.findAll(filters);
+    // "desarrollador" nunca aparece para nadie más que otra cuenta
+    // desarrollador — igual que en GET /api/users, /api/roles y
+    // /api/reports.
+    res.json(isDeveloper(req) ? list : list.filter((d) => d.role !== "desarrollador"));
   } catch {
     res.status(500).json({ error: "Error del servidor" });
   }
@@ -265,7 +269,18 @@ router.post("/:id/start-review", auth, async (req, res) => {
       return res.status(409).json({ error: `Solo se puede tomar para revisión un documento "enviado" (está en "${doc.status}")` });
     }
 
-    res.json(await ReportDocument.startReview(id, req.admin.id));
+    const updated = await ReportDocument.startReview(id, req.admin.id);
+
+    // Mismo motivo que en /submit, /grade y /return: sin esto, "Mis
+    // informes" se quedaba viendo "Enviado" aunque alguien ya lo
+    // hubiera tomado para revisar, sin ninguna señal de que hay
+    // alguien trabajando en ello.
+    const report = await Report.findById(doc.report_id);
+    if (report && report.status === "enviado") {
+      await Report.startReview(doc.report_id, req.admin.id);
+    }
+
+    res.json(updated);
   } catch {
     res.status(500).json({ error: "Error del servidor" });
   }
@@ -290,7 +305,19 @@ router.post("/:id/grade", auth, async (req, res) => {
       return res.status(400).json({ error: "score debe ser texto" });
     }
 
-    res.json(await ReportDocument.grade(id, req.admin.id, req.body.score));
+    const updated = await ReportDocument.grade(id, req.admin.id, req.body.score);
+
+    // Mismo motivo que en /submit: el informe (reports.status) es lo
+    // que de verdad se ve como "estado general" en Mis informes, y
+    // nadie lo tocaba desde acá — "calificar" el documento es la
+    // decisión final de aceptarlo, así que el informe debe pasar a
+    // "aceptado" también.
+    const report = await Report.findById(doc.report_id);
+    if (report && report.status !== "aceptado") {
+      await Report.accept(doc.report_id, req.admin.id);
+    }
+
+    res.json(updated);
   } catch {
     res.status(500).json({ error: "Error del servidor" });
   }
@@ -321,7 +348,19 @@ router.post("/:id/return", auth, async (req, res) => {
       await ReportDocument.addComment(id, req.admin.id, { body: comment.trim() });
     }
 
-    res.json(await ReportDocument.returnToAuthor(id, req.admin.id));
+    const updated = await ReportDocument.returnToAuthor(id, req.admin.id);
+
+    // Mismo motivo que en /grade: el informe también debe reflejar
+    // que se devolvió para corrección, no solo el documento. Para
+    // llegar a /return el documento ya tuvo que pasar por
+    // /start-review, así que el informe normalmente ya está en
+    // "en_revision" en este punto, no "enviado".
+    const report = await Report.findById(doc.report_id);
+    if (report && report.status !== "aceptado" && report.status !== "devuelto") {
+      await Report.returnForCorrection(doc.report_id, req.admin.id, comment?.trim() || null);
+    }
+
+    res.json(updated);
   } catch {
     res.status(500).json({ error: "Error del servidor" });
   }

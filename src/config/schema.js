@@ -183,7 +183,7 @@ const SCHEMA_SQL = `
     narrative      JSONB NOT NULL DEFAULT '{}',
     status         TEXT NOT NULL DEFAULT 'borrador'
                      CONSTRAINT reports_status_check
-                     CHECK (status IN ('borrador', 'enviado', 'aceptado', 'devuelto')),
+                     CHECK (status IN ('borrador', 'enviado', 'en_revision', 'aceptado', 'devuelto')),
     review_comment TEXT,
     reviewed_by    INTEGER REFERENCES users(id),
     reviewed_at    TIMESTAMP,

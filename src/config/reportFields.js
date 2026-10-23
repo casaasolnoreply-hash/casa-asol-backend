@@ -315,7 +315,10 @@ const loadDynamicRoles = async () => {
   const roles = await Role.findAll();
   const prefixes = (await getData("roleCodePrefixes")) || {};
   dynamicRoles = roles
-    .filter((r) => !REPORT_FIELDS[r.name])
+    // "desarrollador" es acceso total, no un rol operativo — nunca
+    // llena informes, así que nunca entra aquí (se colaba en el
+    // selector de "viendo informes de" y en /available-roles).
+    .filter((r) => !REPORT_FIELDS[r.name] && r.name !== "desarrollador")
     .map((r) => ({ name: r.name, label: r.label, codePrefix: prefixes[r.name] }));
 };
 

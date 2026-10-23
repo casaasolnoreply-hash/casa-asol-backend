@@ -3,7 +3,7 @@ const auth   = require("../middleware/auth");
 const Report = require("../models/Report");
 const Role   = require("../models/Role");
 const { getReportFields, getConfiguredRoles, flattenNarrativeFields } = require("../config/reportFields");
-const { getScope, mergeScope } = require("../middleware/authorize");
+const { getScope, mergeScope, isDeveloper } = require("../middleware/authorize");
 
 // Antes esto era una lista fija de roles en el código
 // (admin/desarrollador/las-dos-directoras). Ahora es configurable
@@ -149,7 +149,10 @@ router.get("/", auth, async (req, res) => {
     } else {
       filters = { role: req.admin.role, authorId: req.admin.id };
     }
-    res.json(await Report.findAll(filters));
+    const list = await Report.findAll(filters);
+    // "desarrollador" nunca aparece para nadie más que otra cuenta
+    // desarrollador — igual que en GET /api/users y GET /api/roles.
+    res.json(isDeveloper(req) ? list : list.filter((r) => r.role !== "desarrollador"));
   } catch {
     res.status(500).json({ error: "Error del servidor" });
   }
@@ -248,8 +251,8 @@ router.post("/:id/accept", auth, async (req, res) => {
     if (!canSeeRole(await getScope(req, "aceptarInformes"), existing.role)) {
       return res.status(403).json({ error: "No tienes permiso para esta acción" });
     }
-    if (existing.status !== "enviado") {
-      return res.status(409).json({ error: `Solo se puede aceptar un informe "enviado" (está en "${existing.status}")` });
+    if (existing.status !== "enviado" && existing.status !== "en_revision") {
+      return res.status(409).json({ error: `Solo se puede aceptar un informe "enviado" o "en revisión" (está en "${existing.status}")` });
     }
 
     res.json(await Report.accept(id, req.admin.id));
@@ -273,8 +276,8 @@ router.post("/:id/return", auth, async (req, res) => {
     if (!canSeeRole(await getScope(req, "aceptarInformes"), existing.role)) {
       return res.status(403).json({ error: "No tienes permiso para esta acción" });
     }
-    if (existing.status !== "enviado") {
-      return res.status(409).json({ error: `Solo se puede devolver un informe "enviado" (está en "${existing.status}")` });
+    if (existing.status !== "enviado" && existing.status !== "en_revision") {
+      return res.status(409).json({ error: `Solo se puede devolver un informe "enviado" o "en revisión" (está en "${existing.status}")` });
     }
 
     const comment = req.body?.comment;

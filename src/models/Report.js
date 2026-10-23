@@ -78,6 +78,11 @@ const submit = async (id) => {
   return findById(id);
 };
 
+const startReview = async (id, reviewerId) => {
+  await pool.query("UPDATE reports SET status = 'en_revision', reviewed_by = $1 WHERE id = $2", [reviewerId, id]);
+  return findById(id);
+};
+
 const accept = async (id, reviewerId) => {
   await pool.query(
     "UPDATE reports SET status = 'aceptado', reviewed_by = $1, reviewed_at = NOW(), review_comment = NULL WHERE id = $2",
@@ -99,4 +104,4 @@ const remove = async (id) => {
   return rowCount > 0;
 };
 
-module.exports = { findAll, findById, create, update, submit, accept, returnForCorrection, remove };
+module.exports = { findAll, findById, create, update, submit, startReview, accept, returnForCorrection, remove };
